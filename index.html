@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.sheetjs.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; connect-src 'self' https: http:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.sheetjs.com;">
   <title>区域地图工坊</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -19,7 +19,7 @@
           <p>SVG 数据地图 · 完全本地处理</p>
         </div>
       </div>
-      <div class="privacy-pill"><span></span>文件不会离开这台 Mac</div>
+      <div class="privacy-pill"><span></span>素材本地处理 · 仅请求你填写的 API</div>
       <button id="exportTopButton" class="button primary" disabled>导出地图</button>
     </header>
 
@@ -61,6 +61,33 @@
             <span class="upload-action">选择</span>
           </label>
           <div id="dataFileInfo" class="file-info hidden"></div>
+
+          <div class="import-divider"><span>或使用 JSON API</span></div>
+          <div class="api-import-card">
+            <label class="api-url-label" for="apiUrl">JSON API 地址</label>
+            <div class="api-url-row">
+              <input id="apiUrl" type="url" inputmode="url" placeholder="https://api.example.com/regions">
+              <button id="fetchApiButton" class="button primary" type="button">读取 API</button>
+            </div>
+            <details class="api-advanced">
+              <summary>请求设置（可选）</summary>
+              <div class="api-settings-grid">
+                <label>请求方式
+                  <select id="apiMethod">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                  </select>
+                </label>
+                <label class="api-wide">请求头 JSON
+                  <textarea id="apiHeaders" rows="3" spellcheck="false" placeholder='{"Authorization":"Bearer ..."}'></textarea>
+                </label>
+                <label id="apiBodyWrap" class="api-wide hidden">请求体 JSON
+                  <textarea id="apiBody" rows="4" spellcheck="false" placeholder='{"year":2026}'></textarea>
+                </label>
+              </div>
+            </details>
+            <p class="api-hint">自动识别数组及 data、list、rows、items、records、result 等嵌套结构。API 需允许浏览器跨域访问。</p>
+          </div>
 
           <div id="columnMapping" class="subsection hidden">
             <div class="subsection-title">
