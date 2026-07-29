@@ -170,6 +170,14 @@
             <div class="field-grid">
               <label>边框颜色<input id="strokeColor" type="color" value="#ffffff"></label>
               <label>边框粗细<input id="strokeWidth" type="number" min="0" max="10" step="0.2" value="1"></label>
+              <label>边框样式
+                <select id="strokeStyle">
+                  <option value="solid">实线</option>
+                  <option value="dashed">虚线</option>
+                  <option value="dotted">点线</option>
+                  <option value="dashdot">点划线</option>
+                </select>
+              </label>
               <label>背景颜色<input id="backgroundColor" type="color" value="#f8fafc"></label>
               <label class="check-label"><input id="transparentPreview" type="checkbox">预览透明背景</label>
             </div>
@@ -184,6 +192,8 @@
               <label>标题字号<input id="titleSize" type="number" min="12" max="96" value="30"></label>
               <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
               <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="10"></label>
+              <label>标签描边颜色<input id="labelOutlineColor" type="color" value="#ffffff"></label>
+              <label>标签描边粗细<input id="labelOutlineWidth" type="number" min="0" max="8" step="0.2" value="1.6"></label>
             </div>
             <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示数据标注</label>
             <div id="labelFieldControls" class="label-field-controls hidden">
@@ -222,6 +232,27 @@
               </div>
               <label class="check-label compact"><input id="useThousands" type="checkbox" checked>数值使用千位分隔符</label>
               <label class="check-label compact"><input id="showTooltip" type="checkbox" checked>鼠标悬停显示完整数据</label>
+              <div class="label-position-card">
+                <div class="label-position-heading">
+                  <div>
+                    <strong>标注位置与引导线</strong>
+                    <small>在预览地图中直接拖动标注，移动后自动连接原区域</small>
+                  </div>
+                  <button id="resetLabelPositions" type="button" class="mini-button ghost">重置位置</button>
+                </div>
+                <label class="check-label"><input id="showLeaderLines" type="checkbox" checked>显示引导线</label>
+                <div class="field-grid">
+                  <label>引导线颜色<input id="leaderLineColor" type="color" value="#64748b"></label>
+                  <label>引导线粗细<input id="leaderLineWidth" type="number" min="0.2" max="8" step="0.2" value="1"></label>
+                  <label>引导线样式
+                    <select id="leaderLineStyle">
+                      <option value="solid">实线</option>
+                      <option value="dashed">虚线</option>
+                      <option value="dotted">点线</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
               <div class="label-preview-card">
                 <span>标注预览</span>
                 <strong id="labelPreviewExample">导入数据后显示</strong>
@@ -296,7 +327,7 @@
             <p>地图将在这里实时预览，所有文件只在本机处理。</p>
             <button id="emptyUploadButton" class="button secondary">选择 SVG 文件</button>
           </div>
-          <div id="previewStage" class="preview-stage hidden">
+          <div id="previewStage" class="preview-stage hidden" title="滚轮或触控板手势可缩放预览">
             <div id="previewFrame" class="preview-frame"></div>
           </div>
         </div>
@@ -316,6 +347,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-values-only"></script>
+  <script src="app.js?v=20260729-label-editor"></script>
 </body>
 </html>
