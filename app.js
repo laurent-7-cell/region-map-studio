@@ -18,14 +18,17 @@
     backgroundImage: "",
     logoImage: "",
     previewZoom: 1,
+    labelOffsets: {},
     renderedSvg: "",
     renderTimer: null,
   };
 
   const controls = [
     "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
-    "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
-    "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
+    "strokeWidth", "strokeStyle", "backgroundColor", "transparentPreview", "mapTitle",
+    "titleColor", "titleSize", "labelColor", "labelSize", "labelOutlineColor",
+    "labelOutlineWidth", "showLabels", "showLeaderLines", "leaderLineColor",
+    "leaderLineWidth", "leaderLineStyle",
     "useThousands", "showTooltip", "labelLayout", "labelDecimals", "labelFitMode",
     "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
   ];
@@ -180,6 +183,7 @@
       state.svgName = name;
       state.mapRegions = regions;
       state.svgMarkup = serializer.serializeToString(doc.documentElement);
+      state.labelOffsets = {};
       $("svgFileInfo").innerHTML = `<strong>${escapeHtml(name)}</strong><span>${regions.length} 个区域${sourceMeta ? ` · ${escapeHtml(sourceMeta)}` : ""}</span>`;
       $("svgFileInfo").classList.remove("hidden");
       $("mapRegionCount").textContent = String(regions.length);
@@ -796,6 +800,27 @@
     return mixColor($("colorLow").value, $("colorHigh").value, ratio);
   }
 
+  function strokeDashArray(style) {
+    if (style === "dashed") return "8 5";
+    if (style === "dotted") return "1 4";
+    if (style === "dashdot") return "8 4 1 4";
+    return "";
+  }
+
+  function applyStrokePattern(node, style) {
+    const dashArray = strokeDashArray(style);
+    if (dashArray) {
+      node.setAttribute("stroke-dasharray", dashArray);
+      node.style.strokeDasharray = dashArray;
+    } else {
+      node.removeAttribute("stroke-dasharray");
+      node.style.removeProperty("stroke-dasharray");
+    }
+    const lineCap = style === "dotted" ? "round" : "butt";
+    node.setAttribute("stroke-linecap", lineCap);
+    node.style.strokeLinecap = lineCap;
+  }
+
   function applyRegionStyle(node, fill) {
     const targets = ["path", "polygon", "polyline", "rect", "circle", "ellipse"].includes(node.localName)
       ? [node]
@@ -808,6 +833,7 @@
       shape.setAttribute("stroke-width", $("strokeWidth").value);
       shape.style.strokeWidth = $("strokeWidth").value;
       shape.style.vectorEffect = "non-scaling-stroke";
+      applyStrokePattern(shape, $("strokeStyle").value);
     });
   }
 
@@ -889,6 +915,111 @@
     return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
   }
 
+  function createLeaderLine(anchorX, anchorY, labelX, labelY, mapKey) {
+    const line = createSvgElement("line", {
+      x1: anchorX,
+      y1: anchorY,
+      x2: labelX,
+      y2: labelY,
+      stroke: $("leaderLineColor").value,
+      "stroke-width": $("leaderLineWidth").value,
+      "vector-effect": "non-scaling-stroke",
+      "pointer-events": "none",
+      "data-app-leader": "true",
+      "data-map-key": mapKey,
+    });
+    applyStrokePattern(line, $("leaderLineStyle").value);
+    return line;
+  }
+
+  function localSvgPoint(root, layer, event) {
+    const matrix = layer.getScreenCTM();
+    if (!matrix) return null;
+    const point = root.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return point.matrixTransform(matrix.inverse());
+  }
+
+  function attachLabelDragging(root, layer, leaderLines) {
+    layer.querySelectorAll('[data-app-label="true"]').forEach((label) => {
+      label.style.cursor = "move";
+      label.style.userSelect = "none";
+      label.style.touchAction = "none";
+      label.addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        const start = localSvgPoint(root, layer, event);
+        if (!start) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const mapKey = label.getAttribute("data-map-key");
+        const anchorX = Number(label.getAttribute("data-anchor-x"));
+        const anchorY = Number(label.getAttribute("data-anchor-y"));
+        const initialX = Number(label.getAttribute("x"));
+        const initialY = Number(label.getAttribute("y"));
+        let currentX = initialX;
+        let currentY = initialY;
+        let moved = false;
+        let leader = leaderLines.get(mapKey) || null;
+        label.classList.add("dragging");
+        label.setPointerCapture?.(event.pointerId);
+
+        const move = (moveEvent) => {
+          const point = localSvgPoint(root, layer, moveEvent);
+          if (!point) return;
+          moveEvent.preventDefault();
+          currentX = initialX + point.x - start.x;
+          currentY = initialY + point.y - start.y;
+          moved = moved || Math.hypot(currentX - initialX, currentY - initialY) > 0.2;
+          label.setAttribute("x", currentX);
+          label.setAttribute("y", currentY);
+          label.querySelectorAll("tspan").forEach((tspan) => tspan.setAttribute("x", currentX));
+
+          const hasOffset = Math.hypot(currentX - anchorX, currentY - anchorY) > 0.5;
+          if ($("showLeaderLines").checked && hasOffset) {
+            if (!leader) {
+              leader = createLeaderLine(anchorX, anchorY, currentX, currentY, mapKey);
+              layer.insertBefore(leader, label);
+              leaderLines.set(mapKey, leader);
+            }
+            leader.setAttribute("x2", currentX);
+            leader.setAttribute("y2", currentY);
+          } else if (leader) {
+            leader.remove();
+            leaderLines.delete(mapKey);
+            leader = null;
+          }
+        };
+
+        const end = (endEvent) => {
+          label.removeEventListener("pointermove", move);
+          label.removeEventListener("pointerup", end);
+          label.removeEventListener("pointercancel", end);
+          label.classList.remove("dragging");
+          try {
+            label.releasePointerCapture?.(endEvent.pointerId);
+          } catch {
+            // Pointer capture may already have been released by the browser.
+          }
+          if (!moved) return;
+          const offsetX = currentX - anchorX;
+          const offsetY = currentY - anchorY;
+          if (Math.hypot(offsetX, offsetY) <= 0.5) {
+            delete state.labelOffsets[mapKey];
+          } else {
+            state.labelOffsets[mapKey] = { x: offsetX, y: offsetY };
+          }
+          state.renderedSvg = serializer.serializeToString(root);
+          setStatus(`已调整标注位置：${mapKey}`);
+        };
+
+        label.addEventListener("pointermove", move);
+        label.addEventListener("pointerup", end);
+        label.addEventListener("pointercancel", end);
+      });
+    });
+  }
+
   async function refreshPreview() {
     if (!state.svgMarkup) return;
     const doc = parser.parseFromString(state.svgMarkup, "image/svg+xml");
@@ -942,6 +1073,7 @@
     $("previewFrame").innerHTML = serializer.serializeToString(root);
     const liveRoot = $("previewFrame").querySelector("svg");
     const liveLayer = liveRoot.querySelector("[data-app-map-layer]");
+    const leaderLines = new Map();
 
     if ($("showLabels").checked && liveLayer) {
       state.matches.forEach((item) => {
@@ -959,10 +1091,23 @@
           const fontSize = $("labelFitMode").value === "auto"
             ? Math.max(6, Math.min(configuredSize, fittedWidth, fittedHeight))
             : configuredSize;
-          const anchorX = Number(node.getAttribute("data-label-x"));
-          const anchorY = Number(node.getAttribute("data-label-y"));
-          const labelX = Number.isFinite(anchorX) ? anchorX : box.x + box.width / 2;
-          const labelY = Number.isFinite(anchorY) ? anchorY : box.y + box.height / 2;
+          const customAnchorX = node.hasAttribute("data-label-x")
+            ? Number(node.getAttribute("data-label-x"))
+            : Number.NaN;
+          const customAnchorY = node.hasAttribute("data-label-y")
+            ? Number(node.getAttribute("data-label-y"))
+            : Number.NaN;
+          const anchorX = Number.isFinite(customAnchorX) ? customAnchorX : box.x + box.width / 2;
+          const anchorY = Number.isFinite(customAnchorY) ? customAnchorY : box.y + box.height / 2;
+          const offset = state.labelOffsets[item.mapKey] || { x: 0, y: 0 };
+          const labelX = anchorX + offset.x;
+          const labelY = anchorY + offset.y;
+          const outlineWidth = Math.max(0, Number($("labelOutlineWidth").value) || 0);
+          if ($("showLeaderLines").checked && Math.hypot(offset.x, offset.y) > 0.5) {
+            const leader = createLeaderLine(anchorX, anchorY, labelX, labelY, item.mapKey);
+            liveLayer.appendChild(leader);
+            leaderLines.set(item.mapKey, leader);
+          }
           const text = createSvgElement("text", {
             x: labelX,
             y: labelY,
@@ -973,9 +1118,13 @@
             "font-family": "-apple-system, PingFang SC, sans-serif",
             "font-weight": "600",
             "paint-order": "stroke",
-            stroke: "rgba(255,255,255,0.75)",
-            "stroke-width": Math.max(1.1, fontSize * 0.16).toFixed(2),
+            stroke: outlineWidth > 0 ? $("labelOutlineColor").value : "none",
+            "stroke-width": outlineWidth,
+            "stroke-linejoin": "round",
             "data-app-label": "true",
+            "data-map-key": item.mapKey,
+            "data-anchor-x": anchorX,
+            "data-anchor-y": anchorY,
           });
           lines.forEach((line, index) => {
             const firstLineOffset = lines.length === 1 ? 0 : -0.56 * (lines.length - 1);
@@ -992,6 +1141,7 @@
           // Some unusual SVG nodes do not expose a measurable box.
         }
       });
+      attachLabelDragging(liveRoot, liveLayer, leaderLines);
     }
     state.renderedSvg = serializer.serializeToString(liveRoot);
     updateReadiness();
@@ -1140,6 +1290,7 @@
     $("colorEmpty").value = "#e5e7eb";
     $("strokeColor").value = "#ffffff";
     $("strokeWidth").value = "1";
+    $("strokeStyle").value = "solid";
     $("backgroundColor").value = "#f8fafc";
     $("transparentPreview").checked = false;
     $("mapTitle").value = "";
@@ -1147,7 +1298,13 @@
     $("titleSize").value = "30";
     $("labelColor").value = "#0f172a";
     $("labelSize").value = "10";
+    $("labelOutlineColor").value = "#ffffff";
+    $("labelOutlineWidth").value = "1.6";
     $("showLabels").checked = true;
+    $("showLeaderLines").checked = true;
+    $("leaderLineColor").value = "#64748b";
+    $("leaderLineWidth").value = "1";
+    $("leaderLineStyle").value = "solid";
     $("useThousands").checked = true;
     $("showTooltip").checked = true;
     $("labelLayout").value = "lines";
@@ -1162,10 +1319,67 @@
     $("mapOffsetY").value = "0";
     state.backgroundImage = "";
     state.logoImage = "";
+    state.labelOffsets = {};
     $("backgroundImageName").textContent = "未选择";
     $("logoName").textContent = "未选择";
+    syncHexColorInputs();
     updateColorModeControls();
     schedulePreview();
+  }
+
+  function normalizeHexColor(value) {
+    const match = String(value || "").trim().match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!match) return "";
+    const shortOrFull = match[1].toUpperCase();
+    const full = shortOrFull.length === 3
+      ? shortOrFull.split("").map((character) => character + character).join("")
+      : shortOrFull;
+    return `#${full}`;
+  }
+
+  function setupHexColorInputs() {
+    document.querySelectorAll('#stylePanel input[type="color"]').forEach((colorInput) => {
+      if (colorInput.closest(".color-input-pair")) return;
+      const pair = document.createElement("div");
+      pair.className = "color-input-pair";
+      colorInput.parentNode.insertBefore(pair, colorInput);
+      pair.appendChild(colorInput);
+      const hexInput = document.createElement("input");
+      hexInput.type = "text";
+      hexInput.className = "color-hex-input";
+      hexInput.value = colorInput.value.toUpperCase();
+      hexInput.maxLength = 7;
+      hexInput.spellcheck = false;
+      hexInput.autocomplete = "off";
+      hexInput.setAttribute("aria-label", "十六进制颜色编号");
+      hexInput.placeholder = "#FFFFFF";
+      pair.appendChild(hexInput);
+      colorInput.hexInput = hexInput;
+
+      colorInput.addEventListener("input", () => {
+        hexInput.value = colorInput.value.toUpperCase();
+        hexInput.classList.remove("invalid");
+      });
+      hexInput.addEventListener("input", () => {
+        const normalized = normalizeHexColor(hexInput.value);
+        hexInput.classList.toggle("invalid", Boolean(hexInput.value) && !normalized);
+        if (!normalized) return;
+        colorInput.value = normalized;
+        colorInput.dispatchEvent(new Event("input", { bubbles: true }));
+        colorInput.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      hexInput.addEventListener("blur", () => {
+        const normalized = normalizeHexColor(hexInput.value);
+        hexInput.value = normalized || colorInput.value.toUpperCase();
+        hexInput.classList.remove("invalid");
+      });
+    });
+  }
+
+  function syncHexColorInputs() {
+    document.querySelectorAll('#stylePanel input[type="color"]').forEach((colorInput) => {
+      if (colorInput.hexInput) colorInput.hexInput.value = colorInput.value.toUpperCase();
+    });
   }
 
   function updateColorModeControls() {
@@ -1243,7 +1457,14 @@
     updateLabelPreview();
     schedulePreview();
   });
+  $("resetLabelPositions").addEventListener("click", () => {
+    state.labelOffsets = {};
+    schedulePreview();
+    setStatus("已重置全部标注位置");
+    toast("标注位置已重置");
+  });
 
+  setupHexColorInputs();
   controls.forEach((id) => {
     const node = $(id);
     node.addEventListener(node.type === "text" || node.type === "number" || node.type === "range" ? "input" : "change", () => {
@@ -1276,23 +1497,40 @@
   });
   $("jpgQuality").addEventListener("input", () => $("jpgQualityOutput").textContent = `${$("jpgQuality").value}%`);
 
-  $("zoomInButton").addEventListener("click", () => {
-    state.previewZoom = Math.min(2, state.previewZoom + 0.1);
+  function setPreviewZoom(value) {
+    state.previewZoom = Math.max(0.35, Math.min(4, value));
     applyPreviewZoom();
-  });
-  $("zoomOutButton").addEventListener("click", () => {
-    state.previewZoom = Math.max(0.5, state.previewZoom - 0.1);
-    applyPreviewZoom();
-  });
+  }
+
+  $("zoomInButton").addEventListener("click", () => setPreviewZoom(state.previewZoom + 0.1));
+  $("zoomOutButton").addEventListener("click", () => setPreviewZoom(state.previewZoom - 0.1));
   $("fitButton").addEventListener("click", () => {
-    state.previewZoom = 1;
-    applyPreviewZoom();
+    setPreviewZoom(1);
   });
 
   function applyPreviewZoom() {
     $("previewStage").style.transform = `scale(${state.previewZoom})`;
     $("previewZoomOutput").textContent = `${Math.round(state.previewZoom * 100)}%`;
   }
+
+  $("canvasViewport").addEventListener("wheel", (event) => {
+    if ($("previewStage").classList.contains("hidden")) return;
+    event.preventDefault();
+    const sensitivity = event.ctrlKey ? 0.004 : 0.0015;
+    setPreviewZoom(state.previewZoom * Math.exp(-event.deltaY * sensitivity));
+  }, { passive: false });
+
+  let gestureStartZoom = 1;
+  $("canvasViewport").addEventListener("gesturestart", (event) => {
+    if ($("previewStage").classList.contains("hidden")) return;
+    event.preventDefault();
+    gestureStartZoom = state.previewZoom;
+  }, { passive: false });
+  $("canvasViewport").addEventListener("gesturechange", (event) => {
+    if ($("previewStage").classList.contains("hidden")) return;
+    event.preventDefault();
+    setPreviewZoom(gestureStartZoom * Number(event.scale || 1));
+  }, { passive: false });
 
   updateColorModeControls();
   updateReadiness();
