@@ -26,7 +26,7 @@
     "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
     "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
     "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
-    "showLegend", "mapScale", "mapOffsetX", "mapOffsetY",
+    "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
   ];
 
   function toast(message, duration = 2600) {
@@ -343,7 +343,11 @@
     const longitude = Number(point?.[0]);
     const latitude = Number(point?.[1]);
     if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
-    return [longitude, -latitude];
+    const lambda = longitude * Math.PI / 180;
+    const safeLatitude = Math.max(-85, Math.min(85, latitude));
+    const phi = safeLatitude * Math.PI / 180;
+    const mercatorY = Math.log(Math.tan(Math.PI / 4 + phi / 2));
+    return [lambda, -mercatorY];
   }
 
   function geometryRings(geometry) {
@@ -515,9 +519,11 @@
     populateSelect($("colorColumn"), true);
 
     $("regionColumn").value = chooseHeader(/省|市|区|县|区域|地区|region|area|name/i, state.headers[0]);
-    $("valueColumn").value = chooseHeader(/数值|数量|收入|销售|金额|value|amount|count|revenue/i,
+    $("valueColumn").value = chooseHeader(/数值|数量|收入|销售|金额|value|amount|count|revenue|children|num/i,
       state.headers.find(isMostlyNumeric) || state.headers[1] || state.headers[0]);
-    $("labelColumn").value = chooseHeader(/标签|说明|label|备注/i, "");
+    $("labelColumn").value = state.headers.find((header) =>
+      /(?:^|\.)(?:标签|说明|label|备注)$/i.test(String(header))
+    ) || "";
     $("colorColumn").value = chooseHeader(/颜色|色值|color|colour/i, "");
   }
 
@@ -806,9 +812,14 @@
     const cx = x + width / 2;
     const cy = y + height / 2;
     const scale = Number($("mapScale").value) / 100;
+    const aspect = Number($("mapAspect").value) / 100;
+    const rotation = Number($("mapRotation").value) || 0;
     const dx = Number($("mapOffsetX").value) || 0;
     const dy = Number($("mapOffsetY").value) || 0;
-    mapLayer.setAttribute("transform", `translate(${dx} ${dy}) translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`);
+    mapLayer.setAttribute(
+      "transform",
+      `translate(${dx} ${dy}) translate(${cx} ${cy}) rotate(${rotation}) scale(${scale * aspect} ${scale}) translate(${-cx} ${-cy})`
+    );
     movable.forEach((node) => mapLayer.appendChild(node));
     root.appendChild(mapLayer);
     addTitleLegendLogo(root, viewBox, min, max);
@@ -825,9 +836,13 @@
         try {
           const box = node.getBBox();
           if (!box.width && !box.height) return;
+          const labelX = box.x + box.width / 2;
+          const labelY = box.y + box.height / 2;
+          const lines = [item.label || item.sourceName].filter(Boolean);
+          if (item.value !== null) lines.push(formatNumber(item.value));
           const text = createSvgElement("text", {
-            x: box.x + box.width / 2,
-            y: box.y + box.height / 2,
+            x: labelX,
+            y: labelY,
             "text-anchor": "middle",
             "dominant-baseline": "central",
             fill: $("labelColor").value,
@@ -839,7 +854,15 @@
             "stroke-width": "2",
             "data-app-label": "true",
           });
-          text.textContent = item.label;
+          lines.forEach((line, index) => {
+            const tspan = createSvgElement("tspan", {
+              x: labelX,
+              dy: lines.length === 1 ? "0" : index === 0 ? "-0.52em" : "1.12em",
+              "font-weight": index === lines.length - 1 && item.value !== null ? "750" : "600",
+            });
+            tspan.textContent = line;
+            text.appendChild(tspan);
+          });
           liveLayer.appendChild(text);
         } catch {
           // Some unusual SVG nodes do not expose a measurable box.
@@ -1000,9 +1023,12 @@
     $("titleSize").value = "30";
     $("labelColor").value = "#0f172a";
     $("labelSize").value = "12";
-    $("showLabels").checked = false;
+    $("showLabels").checked = true;
     $("showLegend").checked = true;
     $("mapScale").value = "100";
+    $("mapRotation").value = "0";
+    $("mapAspect").value = "100";
+    $("mapAspectOutput").textContent = "100%";
     $("mapOffsetX").value = "0";
     $("mapOffsetY").value = "0";
     state.backgroundImage = "";
@@ -1081,6 +1107,7 @@
     node.addEventListener(node.type === "text" || node.type === "number" || node.type === "range" ? "input" : "change", () => {
       if (id === "colorMode") updateColorModeControls();
       if (id === "mapScale") $("mapScaleOutput").textContent = `${node.value}%`;
+      if (id === "mapAspect") $("mapAspectOutput").textContent = `${node.value}%`;
       schedulePreview();
     });
   });
