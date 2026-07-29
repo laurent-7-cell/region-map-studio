@@ -389,6 +389,68 @@ output { color: var(--muted); font-size: 10px; }
 
 .check-label input, .export-option input { accent-color: var(--accent); }
 
+.label-field-controls {
+  margin: 4px 0 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.label-field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.label-field-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.label-field-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  max-height: 138px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.label-field-option {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.label-field-option input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.label-field-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-label.compact {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 .mini-upload {
   display: flex;
   justify-content: space-between;
