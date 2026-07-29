@@ -86,7 +86,7 @@
                 </label>
               </div>
             </details>
-            <p class="api-hint">支持 GeoJSON 直接生成地图，并自动识别 data、list、rows、items、records、result 等嵌套数据。API 需允许浏览器跨域访问。</p>
+            <p class="api-hint">GeoJSON 仅用于生成地图边界，不会把经纬度、坐标或行政参数作为标注字段。普通 JSON API 会自动识别 data、list、rows、items、records、result 等数据。API 需允许浏览器跨域访问。</p>
           </div>
 
           <div id="columnMapping" class="subsection hidden">
@@ -190,7 +190,7 @@
               <div class="label-field-heading">
                 <div>
                   <strong>地图标注字段</strong>
-                  <small>勾选省、成交金额、成交数量等字段</small>
+                  <small>仅列出上传数据表的字段，默认推荐省、成交条数、成交金额</small>
                 </div>
                 <span>可多选</span>
               </div>
@@ -220,7 +220,7 @@
                   </select>
                 </label>
               </div>
-              <label class="check-label compact"><input id="showFieldNames" type="checkbox">显示字段名称，如“成交金额：25,800”</label>
+              <label class="check-label compact"><input id="showFieldNames" type="checkbox" checked>显示字段名称，如“成交金额：25,800”</label>
               <label class="check-label compact"><input id="useThousands" type="checkbox" checked>数值使用千位分隔符</label>
               <label class="check-label compact"><input id="showTooltip" type="checkbox" checked>鼠标悬停显示完整数据</label>
               <div class="label-preview-card">
@@ -317,6 +317,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-data-binding"></script>
+  <script src="app.js?v=20260729-deal-fields"></script>
 </body>
 </html>
