@@ -708,7 +708,7 @@
         value: numberValue(row[valueColumn]),
         label: String((labelColumn && row[labelColumn]) ?? sourceName),
         reportColor: colorColumn ? validColor(row[colorColumn]) : "",
-        manualColor: "#5a66e8",
+        manualColor: "#4d8de5",
         mapKey,
         score: mapKey ? best.score : 0,
       };
@@ -853,7 +853,7 @@
         "text-anchor": "middle",
         fill: colorValue("titleColor"),
         "font-size": $("titleSize").value,
-        "font-family": "-apple-system, PingFang SC, sans-serif",
+        "font-family": "Microsoft YaHei, 微软雅黑, PingFang SC, sans-serif",
         "font-weight": "700",
         "data-app-overlay": "title",
       });
@@ -877,7 +877,7 @@
       const label = createSvgElement("text", {
         x: 0, y: 28, fill: colorValue("labelColor"),
         "font-size": Math.max(8, Number($("labelSize").value) * 0.85),
-        "font-family": "-apple-system, PingFang SC, sans-serif",
+        "font-family": "Microsoft YaHei, 微软雅黑, PingFang SC, sans-serif",
       });
       label.textContent = `${formatNumber(min)}  —  ${formatNumber(max)}`;
       legend.appendChild(label);
@@ -1102,7 +1102,7 @@
             "dominant-baseline": "central",
             fill: colorValue("labelColor"),
             "font-size": fontSize.toFixed(2),
-            "font-family": "-apple-system, PingFang SC, sans-serif",
+            "font-family": "Microsoft YaHei, 微软雅黑, PingFang SC, sans-serif",
             "font-weight": "600",
             "paint-order": "stroke",
             stroke: outlineWidth > 0 ? colorValue("labelOutlineColor") : "none",
@@ -1273,24 +1273,24 @@
 
   function resetStyles() {
     $("colorMode").value = "gradient";
-    $("colorLow").value = "#dbeafe";
-    $("colorHigh").value = "#1d4ed8";
-    $("colorEmpty").value = "#e5e7eb";
+    $("colorLow").value = "#bdd4f6";
+    $("colorHigh").value = "#4d8de5";
+    $("colorEmpty").value = "#f4f8ff";
     $("strokeColor").value = "#ffffff";
     $("strokeWidth").value = "1";
     $("strokeStyle").value = "solid";
-    $("backgroundColor").value = "#f8fafc";
+    $("backgroundColor").value = "#ffffff";
     $("transparentPreview").checked = false;
     $("mapTitle").value = "";
-    $("titleColor").value = "#0f172a";
+    $("titleColor").value = "#000000";
     $("titleSize").value = "30";
-    $("labelColor").value = "#0f172a";
+    $("labelColor").value = "#000000";
     $("labelSize").value = "10";
     $("labelOutlineColor").value = "#ffffff";
     $("labelOutlineWidth").value = "1.6";
     $("showLabels").checked = true;
     $("showLeaderLines").checked = true;
-    $("leaderLineColor").value = "#64748b";
+    $("leaderLineColor").value = "#4d8de5";
     $("leaderLineWidth").value = "1";
     $("leaderLineStyle").value = "solid";
     $("useThousands").checked = true;
@@ -1377,7 +1377,7 @@
 
       const transparentInput = popover.querySelector('.color-transparent-option input[type="checkbox"]');
       transparentInput.setAttribute("aria-label", "设为透明");
-      const presets = ["#0F172A", "#FFFFFF", "#64748B", "#2563EB", "#16A34A", "#F59E0B", "#DC2626", "#7C3AED"];
+      const presets = ["#000000", "#FFFFFF", "#4D8DE5", "#BDD4F6", "#75BD42", "#F2BA02", "#EE822F", "#E54C5E"];
       presets.forEach((color) => {
         const preset = document.createElement("button");
         preset.type = "button";
