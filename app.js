@@ -26,7 +26,7 @@
     "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
     "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
     "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
-    "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
+    "showFieldNames", "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
   ];
 
   function toast(message, duration = 2600) {
@@ -525,6 +525,42 @@
       /(?:^|\.)(?:标签|说明|label|备注)$/i.test(String(header))
     ) || "";
     $("colorColumn").value = chooseHeader(/颜色|色值|color|colour/i, "");
+    populateLabelFieldChoices();
+  }
+
+  function populateLabelFieldChoices() {
+    const regionField = $("regionColumn").value;
+    const valueField = $("valueColumn").value;
+    const defaults = new Set([regionField, valueField].filter(Boolean));
+    $("labelFieldList").innerHTML = state.headers.map((header) => `
+      <label class="label-field-option" title="${escapeHtml(header)}">
+        <input type="checkbox" value="${escapeHtml(header)}" ${defaults.has(header) ? "checked" : ""}>
+        <span>${escapeHtml(header)}</span>
+      </label>
+    `).join("");
+    $("labelFieldControls").classList.toggle("hidden", !state.headers.length);
+  }
+
+  function selectedLabelFields() {
+    return [...$("labelFieldList").querySelectorAll('input[type="checkbox"]:checked')]
+      .map((input) => input.value);
+  }
+
+  function formatLabelValue(value) {
+    if (value === null || value === undefined || value === "") return "";
+    const numeric = numberValue(value);
+    return numeric !== null && typeof value !== "boolean" ? formatNumber(numeric) : String(value);
+  }
+
+  function labelLinesForMatch(item) {
+    const row = state.rows[item.rowIndex] || {};
+    const withNames = $("showFieldNames").checked;
+    const lines = selectedLabelFields().map((header) => {
+      const value = formatLabelValue(row[header]);
+      if (!value) return "";
+      return withNames ? `${header}：${value}` : value;
+    }).filter(Boolean);
+    return lines.length ? lines : [item.label || item.sourceName].filter(Boolean);
   }
 
   const aliases = new Map(Object.entries({
@@ -838,8 +874,7 @@
           if (!box.width && !box.height) return;
           const labelX = box.x + box.width / 2;
           const labelY = box.y + box.height / 2;
-          const lines = [item.label || item.sourceName].filter(Boolean);
-          if (item.value !== null) lines.push(formatNumber(item.value));
+          const lines = labelLinesForMatch(item);
           const text = createSvgElement("text", {
             x: labelX,
             y: labelY,
@@ -858,7 +893,7 @@
             const tspan = createSvgElement("tspan", {
               x: labelX,
               dy: lines.length === 1 ? "0" : index === 0 ? "-0.52em" : "1.12em",
-              "font-weight": index === lines.length - 1 && item.value !== null ? "750" : "600",
+              "font-weight": index > 0 ? "750" : "600",
             });
             tspan.textContent = line;
             text.appendChild(tspan);
@@ -1024,6 +1059,7 @@
     $("labelColor").value = "#0f172a";
     $("labelSize").value = "12";
     $("showLabels").checked = true;
+    $("showFieldNames").checked = false;
     $("showLegend").checked = true;
     $("mapScale").value = "100";
     $("mapRotation").value = "0";
@@ -1101,6 +1137,8 @@
     renderMatchList();
     schedulePreview();
   });
+
+  $("labelFieldList").addEventListener("change", schedulePreview);
 
   controls.forEach((id) => {
     const node = $(id);
