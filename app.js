@@ -26,7 +26,8 @@
     "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
     "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
     "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
-    "showFieldNames", "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
+    "showFieldNames", "useThousands", "showTooltip", "labelLayout", "labelDecimals", "labelFitMode",
+    "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
   ];
 
   function toast(message, duration = 2600) {
@@ -423,6 +424,11 @@
       path.setAttribute("stroke-width", "1");
       path.setAttribute("fill-rule", "evenodd");
       group.appendChild(path);
+      const labelAnchor = coordinate(properties.centroid || properties.center);
+      if (labelAnchor) {
+        group.setAttribute("data-label-x", labelAnchor[0].toFixed(2));
+        group.setAttribute("data-label-y", labelAnchor[1].toFixed(2));
+      }
       root.appendChild(group);
     });
     return doc;
@@ -529,9 +535,7 @@
   }
 
   function populateLabelFieldChoices() {
-    const regionField = $("regionColumn").value;
-    const valueField = $("valueColumn").value;
-    const defaults = new Set([regionField, valueField].filter(Boolean));
+    const defaults = new Set(recommendedLabelFields());
     $("labelFieldList").innerHTML = state.headers.map((header) => `
       <label class="label-field-option" title="${escapeHtml(header)}">
         <input type="checkbox" value="${escapeHtml(header)}" ${defaults.has(header) ? "checked" : ""}>
@@ -539,6 +543,24 @@
       </label>
     `).join("");
     $("labelFieldControls").classList.toggle("hidden", !state.headers.length);
+    updateLabelPreview();
+  }
+
+  function recommendedLabelFields() {
+    const regionField = $("regionColumn").value;
+    const valueField = $("valueColumn").value;
+    const amountField = chooseHeader(/成交金额|销售金额|销售额|金额|收入|gmv|revenue|amount/i, "");
+    const quantityField = chooseHeader(/成交数量|商品数量|订单数量|订单量|销量|数量|件数|count|quantity|qty|num/i, "");
+    return [...new Set([regionField, amountField, quantityField, valueField].filter(Boolean))].slice(0, 4);
+  }
+
+  function applyRecommendedLabelFields() {
+    const selected = new Set(recommendedLabelFields());
+    $("labelFieldList").querySelectorAll('input[type="checkbox"]').forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+    updateLabelPreview();
+    schedulePreview();
   }
 
   function selectedLabelFields() {
@@ -546,21 +568,52 @@
       .map((input) => input.value);
   }
 
-  function formatLabelValue(value) {
+  function formatLabelValue(value, header = "") {
     if (value === null || value === undefined || value === "") return "";
+    if (/编码|代码|编号|邮编|id|code|adcode/i.test(header)) return String(value);
     const numeric = numberValue(value);
-    return numeric !== null && typeof value !== "boolean" ? formatNumber(numeric) : String(value);
+    if (numeric === null || typeof value === "boolean") return String(value);
+    const decimals = Number($("labelDecimals").value) || 0;
+    return new Intl.NumberFormat("zh-CN", {
+      useGrouping: $("useThousands").checked,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(numeric);
   }
 
   function labelLinesForMatch(item) {
     const row = state.rows[item.rowIndex] || {};
     const withNames = $("showFieldNames").checked;
     const lines = selectedLabelFields().map((header) => {
-      const value = formatLabelValue(row[header]);
+      const value = formatLabelValue(row[header], header);
       if (!value) return "";
       return withNames ? `${header}：${value}` : value;
     }).filter(Boolean);
-    return lines.length ? lines : [item.label || item.sourceName].filter(Boolean);
+    const fallback = [item.label || item.sourceName].filter(Boolean);
+    const result = lines.length ? lines : fallback;
+    return $("labelLayout").value === "inline" ? [result.join(" · ")] : result;
+  }
+
+  function updateLabelPreview() {
+    if (!state.rows.length) {
+      $("labelPreviewExample").textContent = "导入数据后显示";
+      return;
+    }
+    const previewItem = state.matches.find((item) => item.mapKey) || {
+      rowIndex: 0,
+      label: String(state.rows[0]?.[$("regionColumn").value] ?? ""),
+      sourceName: String(state.rows[0]?.[$("regionColumn").value] ?? ""),
+    };
+    $("labelPreviewExample").textContent = labelLinesForMatch(previewItem).join("\n");
+  }
+
+  function addRegionTooltip(doc, node, item) {
+    node.querySelectorAll(':scope > title[data-app-tooltip="true"]').forEach((title) => title.remove());
+    if (!$("showTooltip").checked) return;
+    const title = doc.createElementNS(SVG_NS, "title");
+    title.setAttribute("data-app-tooltip", "true");
+    title.textContent = labelLinesForMatch(item).join(" · ");
+    node.insertBefore(title, node.firstChild);
   }
 
   const aliases = new Map(Object.entries({
@@ -836,7 +889,10 @@
     state.matches.forEach((item) => {
       if (!item.mapKey) return;
       const node = root.querySelector(`[data-map-key="${cssEscape(item.mapKey)}"]`);
-      if (node) applyRegionStyle(node, colorForMatch(item, min, max));
+      if (node) {
+        applyRegionStyle(node, colorForMatch(item, min, max));
+        addRegionTooltip(doc, node, item);
+      }
     });
 
     const movable = [...root.children].filter((node) =>
@@ -872,27 +928,37 @@
         try {
           const box = node.getBBox();
           if (!box.width && !box.height) return;
-          const labelX = box.x + box.width / 2;
-          const labelY = box.y + box.height / 2;
           const lines = labelLinesForMatch(item);
+          const configuredSize = Number($("labelSize").value) || 10;
+          const longestLine = Math.max(1, ...lines.map((line) => [...String(line)].length));
+          const fittedWidth = (box.width * 0.78) / (longestLine * 0.62);
+          const fittedHeight = (box.height * 0.82) / Math.max(1, lines.length * 1.15);
+          const fontSize = $("labelFitMode").value === "auto"
+            ? Math.max(6, Math.min(configuredSize, fittedWidth, fittedHeight))
+            : configuredSize;
+          const anchorX = Number(node.getAttribute("data-label-x"));
+          const anchorY = Number(node.getAttribute("data-label-y"));
+          const labelX = Number.isFinite(anchorX) ? anchorX : box.x + box.width / 2;
+          const labelY = Number.isFinite(anchorY) ? anchorY : box.y + box.height / 2;
           const text = createSvgElement("text", {
             x: labelX,
             y: labelY,
             "text-anchor": "middle",
             "dominant-baseline": "central",
             fill: $("labelColor").value,
-            "font-size": $("labelSize").value,
+            "font-size": fontSize.toFixed(2),
             "font-family": "-apple-system, PingFang SC, sans-serif",
             "font-weight": "600",
             "paint-order": "stroke",
             stroke: "rgba(255,255,255,0.75)",
-            "stroke-width": "2",
+            "stroke-width": Math.max(1.1, fontSize * 0.16).toFixed(2),
             "data-app-label": "true",
           });
           lines.forEach((line, index) => {
+            const firstLineOffset = lines.length === 1 ? 0 : -0.56 * (lines.length - 1);
             const tspan = createSvgElement("tspan", {
               x: labelX,
-              dy: lines.length === 1 ? "0" : index === 0 ? "-0.52em" : "1.12em",
+              dy: index === 0 ? `${firstLineOffset}em` : "1.12em",
               "font-weight": index > 0 ? "750" : "600",
             });
             tspan.textContent = line;
@@ -1057,9 +1123,14 @@
     $("titleColor").value = "#0f172a";
     $("titleSize").value = "30";
     $("labelColor").value = "#0f172a";
-    $("labelSize").value = "12";
+    $("labelSize").value = "10";
     $("showLabels").checked = true;
     $("showFieldNames").checked = false;
+    $("useThousands").checked = true;
+    $("showTooltip").checked = true;
+    $("labelLayout").value = "lines";
+    $("labelDecimals").value = "0";
+    $("labelFitMode").value = "auto";
     $("showLegend").checked = true;
     $("mapScale").value = "100";
     $("mapRotation").value = "0";
@@ -1138,7 +1209,18 @@
     schedulePreview();
   });
 
-  $("labelFieldList").addEventListener("change", schedulePreview);
+  $("labelFieldList").addEventListener("change", () => {
+    updateLabelPreview();
+    schedulePreview();
+  });
+  $("selectRecommendedFields").addEventListener("click", applyRecommendedLabelFields);
+  $("clearLabelFields").addEventListener("click", () => {
+    $("labelFieldList").querySelectorAll('input[type="checkbox"]').forEach((input) => {
+      input.checked = false;
+    });
+    updateLabelPreview();
+    schedulePreview();
+  });
 
   controls.forEach((id) => {
     const node = $(id);
@@ -1146,6 +1228,7 @@
       if (id === "colorMode") updateColorModeControls();
       if (id === "mapScale") $("mapScaleOutput").textContent = `${node.value}%`;
       if (id === "mapAspect") $("mapAspectOutput").textContent = `${node.value}%`;
+      if (["showFieldNames", "useThousands", "labelLayout", "labelDecimals"].includes(id)) updateLabelPreview();
       schedulePreview();
     });
   });
