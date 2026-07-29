@@ -26,7 +26,7 @@
     "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
     "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
     "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
-    "showFieldNames", "useThousands", "showTooltip", "labelLayout", "labelDecimals", "labelFitMode",
+    "useThousands", "showTooltip", "labelLayout", "labelDecimals", "labelFitMode",
     "showLegend", "mapScale", "mapOffsetX", "mapOffsetY", "mapRotation", "mapAspect",
   ];
 
@@ -607,11 +607,10 @@
 
   function labelLinesForMatch(item) {
     const row = state.rows[item.rowIndex] || {};
-    const withNames = $("showFieldNames").checked;
     const lines = selectedLabelFields().map((header) => {
       const value = formatLabelValue(row[header], header);
       if (!value) return "";
-      return withNames ? `${displayFieldName(header)}：${value}` : value;
+      return value;
     }).filter(Boolean);
     const fallback = [item.label || item.sourceName].filter(Boolean);
     const result = lines.length ? lines : fallback;
@@ -1149,7 +1148,6 @@
     $("labelColor").value = "#0f172a";
     $("labelSize").value = "10";
     $("showLabels").checked = true;
-    $("showFieldNames").checked = true;
     $("useThousands").checked = true;
     $("showTooltip").checked = true;
     $("labelLayout").value = "lines";
@@ -1252,7 +1250,7 @@
       if (id === "colorMode") updateColorModeControls();
       if (id === "mapScale") $("mapScaleOutput").textContent = `${node.value}%`;
       if (id === "mapAspect") $("mapAspectOutput").textContent = `${node.value}%`;
-      if (["showFieldNames", "useThousands", "labelLayout", "labelDecimals"].includes(id)) updateLabelPreview();
+      if (["useThousands", "labelLayout", "labelDecimals"].includes(id)) updateLabelPreview();
       schedulePreview();
     });
   });
