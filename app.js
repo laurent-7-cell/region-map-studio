@@ -487,6 +487,11 @@
       if (isGeoJson(json)) {
         setBusy(true, "正在生成 GeoJSON 地图", "转换区域边界为可编辑 SVG…");
         await importGeoJsonMap(json, parsedUrl.hostname);
+        setStatus(state.rows.length
+          ? `GeoJSON 地图已生成，并已匹配上传数据表的 ${state.rows.length} 行数据`
+          : "GeoJSON 地图已生成；请继续上传 Excel、CSV 或数据 JSON");
+        toast(`GeoJSON 地图读取成功：${json.features.length} 个区域`);
+        return;
       }
       const parsed = rowsFromJson(json);
       applyParsedData(parsed, `API · ${parsedUrl.hostname}`, parsedUrl.href);
@@ -535,23 +540,42 @@
   }
 
   function populateLabelFieldChoices() {
+    const fields = allowedLabelFields();
     const defaults = new Set(recommendedLabelFields());
-    $("labelFieldList").innerHTML = state.headers.map((header) => `
+    $("labelFieldList").innerHTML = fields.map((header) => `
       <label class="label-field-option" title="${escapeHtml(header)}">
         <input type="checkbox" value="${escapeHtml(header)}" ${defaults.has(header) ? "checked" : ""}>
-        <span>${escapeHtml(header)}</span>
+        <span>${escapeHtml(labelFieldOptionText(header))}</span>
       </label>
     `).join("");
-    $("labelFieldControls").classList.toggle("hidden", !state.headers.length);
+    $("labelFieldControls").classList.toggle("hidden", !fields.length);
     updateLabelPreview();
+  }
+
+  const amountFieldPattern = /成交金额|交易金额|支付金额|销售金额|销售额|商家收入|收入|gmv|revenue|amount/i;
+  const countFieldPattern = /成交条数|成交笔数|成交数量|交易笔数|订单数量|订单量|商品数量|销量|数量|件数|count|quantity|qty/i;
+
+  function allowedLabelFields() {
+    return [...state.headers];
+  }
+
+  function displayFieldName(header) {
+    if (header === $("regionColumn").value) return "省";
+    if (countFieldPattern.test(String(header))) return "成交条数";
+    if (amountFieldPattern.test(String(header))) return "成交金额";
+    return String(header);
+  }
+
+  function labelFieldOptionText(header) {
+    const displayName = displayFieldName(header);
+    return displayName === header ? displayName : `${displayName}（${header}）`;
   }
 
   function recommendedLabelFields() {
     const regionField = $("regionColumn").value;
-    const valueField = $("valueColumn").value;
-    const amountField = chooseHeader(/成交金额|销售金额|销售额|金额|收入|gmv|revenue|amount/i, "");
-    const quantityField = chooseHeader(/成交数量|商品数量|订单数量|订单量|销量|数量|件数|count|quantity|qty|num/i, "");
-    return [...new Set([regionField, amountField, quantityField, valueField].filter(Boolean))].slice(0, 4);
+    const countField = chooseHeader(countFieldPattern, "");
+    const amountField = chooseHeader(amountFieldPattern, "");
+    return [...new Set([regionField, countField, amountField].filter(Boolean))];
   }
 
   function applyRecommendedLabelFields() {
@@ -587,7 +611,7 @@
     const lines = selectedLabelFields().map((header) => {
       const value = formatLabelValue(row[header], header);
       if (!value) return "";
-      return withNames ? `${header}：${value}` : value;
+      return withNames ? `${displayFieldName(header)}：${value}` : value;
     }).filter(Boolean);
     const fallback = [item.label || item.sourceName].filter(Boolean);
     const result = lines.length ? lines : fallback;
@@ -1125,7 +1149,7 @@
     $("labelColor").value = "#0f172a";
     $("labelSize").value = "10";
     $("showLabels").checked = true;
-    $("showFieldNames").checked = false;
+    $("showFieldNames").checked = true;
     $("useThousands").checked = true;
     $("showTooltip").checked = true;
     $("labelLayout").value = "lines";
