@@ -184,7 +184,7 @@
               <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
               <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="12"></label>
             </div>
-            <label class="check-label"><input id="showLabels" type="checkbox">在区域上显示标签</label>
+            <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示名称和数据</label>
             <label class="check-label"><input id="showLegend" type="checkbox" checked>显示图例</label>
             <label class="mini-upload">Logo / 水印<input id="logoInput" type="file" accept="image/*"><span id="logoName">未选择</span></label>
           </div>
@@ -195,6 +195,8 @@
             <div class="field-grid">
               <label>水平移动<input id="mapOffsetX" type="number" min="-1000" max="1000" value="0"></label>
               <label>垂直移动<input id="mapOffsetY" type="number" min="-1000" max="1000" value="0"></label>
+              <label>旋转角度<input id="mapRotation" type="number" min="-180" max="180" step="1" value="0"></label>
+              <label>横向比例 <output id="mapAspectOutput">100%</output><input id="mapAspect" type="range" min="60" max="140" value="100"></label>
             </div>
           </div>
         </section>
@@ -272,6 +274,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-geojson"></script>
+  <script src="app.js?v=20260729-map-geometry"></script>
 </body>
 </html>
