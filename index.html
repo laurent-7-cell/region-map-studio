@@ -91,15 +91,16 @@
 
           <div id="columnMapping" class="subsection hidden">
             <div class="subsection-title">
-              <h3>字段识别</h3>
-              <span>可手动修改</span>
+              <h3>数据与地图绑定</h3>
+              <span>自动识别，可手动修改</span>
             </div>
             <div class="field-grid">
-              <label>区域名称<select id="regionColumn"></select></label>
-              <label>着色数值<select id="valueColumn"></select></label>
-              <label>显示标签<select id="labelColumn"></select></label>
+              <label>区域匹配字段<select id="regionColumn"></select></label>
+              <label>颜色渲染指标<select id="valueColumn"></select></label>
+              <label>备用文字标签<select id="labelColumn"></select></label>
               <label>颜色字段<select id="colorColumn"></select></label>
             </div>
+            <p class="mapping-hint">区域字段用于和地图行政区匹配；渲染指标决定地图颜色。省、成交金额、成交数量等展示内容可在“样式编辑”中自由多选。</p>
             <button id="runMatchButton" class="button primary full">开始自动匹配</button>
           </div>
         </section>
@@ -182,16 +183,50 @@
               <label>标题颜色<input id="titleColor" type="color" value="#0f172a"></label>
               <label>标题字号<input id="titleSize" type="number" min="12" max="96" value="30"></label>
               <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
-              <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="12"></label>
+              <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="10"></label>
             </div>
             <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示数据标注</label>
             <div id="labelFieldControls" class="label-field-controls hidden">
               <div class="label-field-heading">
-                <strong>地图标注字段</strong>
+                <div>
+                  <strong>地图标注字段</strong>
+                  <small>勾选省、成交金额、成交数量等字段</small>
+                </div>
                 <span>可多选</span>
               </div>
+              <div class="label-field-actions">
+                <button id="selectRecommendedFields" type="button" class="mini-button">推荐组合</button>
+                <button id="clearLabelFields" type="button" class="mini-button ghost">清空</button>
+              </div>
               <div id="labelFieldList" class="label-field-list"></div>
-              <label class="check-label compact"><input id="showFieldNames" type="checkbox">同时显示字段名称</label>
+              <div class="field-grid label-format-grid">
+                <label>排列方式
+                  <select id="labelLayout">
+                    <option value="lines">每项换行</option>
+                    <option value="inline">单行组合</option>
+                  </select>
+                </label>
+                <label>小数位数
+                  <select id="labelDecimals">
+                    <option value="0">0 位</option>
+                    <option value="1">1 位</option>
+                    <option value="2">2 位</option>
+                  </select>
+                </label>
+                <label>字号适配
+                  <select id="labelFitMode">
+                    <option value="auto">按区域自动适配</option>
+                    <option value="fixed">使用固定字号</option>
+                  </select>
+                </label>
+              </div>
+              <label class="check-label compact"><input id="showFieldNames" type="checkbox">显示字段名称，如“成交金额：25,800”</label>
+              <label class="check-label compact"><input id="useThousands" type="checkbox" checked>数值使用千位分隔符</label>
+              <label class="check-label compact"><input id="showTooltip" type="checkbox" checked>鼠标悬停显示完整数据</label>
+              <div class="label-preview-card">
+                <span>标注预览</span>
+                <strong id="labelPreviewExample">导入数据后显示</strong>
+              </div>
             </div>
             <label class="check-label"><input id="showLegend" type="checkbox" checked>显示图例</label>
             <label class="mini-upload">Logo / 水印<input id="logoInput" type="file" accept="image/*"><span id="logoName">未选择</span></label>
@@ -282,6 +317,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-label-fields"></script>
+  <script src="app.js?v=20260729-data-binding"></script>
 </body>
 </html>
