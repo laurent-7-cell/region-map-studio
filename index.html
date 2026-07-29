@@ -27,9 +27,8 @@
       <aside class="sidebar">
         <nav class="stepper" aria-label="制作步骤">
           <button class="step active" data-panel="importPanel"><b>1</b><span>导入素材</span><i id="stepImportState">待完成</i></button>
-          <button class="step" data-panel="matchPanel"><b>2</b><span>区域匹配</span><i id="stepMatchState">待完成</i></button>
-          <button class="step" data-panel="stylePanel"><b>3</b><span>样式编辑</span><i>可选</i></button>
-          <button class="step" data-panel="exportPanel"><b>4</b><span>导出设置</span><i>PNG/JPG/SVG</i></button>
+          <button class="step" data-panel="stylePanel"><b>2</b><span>样式编辑</span><i>实时预览</i></button>
+          <button class="step" data-panel="exportPanel"><b>3</b><span>导出设置</span><i>PNG/JPG/SVG</i></button>
         </nav>
 
         <section id="importPanel" class="panel active">
@@ -95,47 +94,20 @@
               <span>自动识别，可手动修改</span>
             </div>
             <div class="field-grid">
-              <label>区域匹配字段<select id="regionColumn"></select></label>
+              <label>地图区域字段<select id="regionColumn"></select></label>
               <label>颜色渲染指标<select id="valueColumn"></select></label>
               <label>备用文字标签<select id="labelColumn"></select></label>
               <label>颜色字段<select id="colorColumn"></select></label>
             </div>
-            <p class="mapping-hint">区域字段用于和地图行政区匹配；渲染指标决定地图颜色。省、成交金额、成交数量等展示内容可在“样式编辑”中自由多选。</p>
-            <button id="runMatchButton" class="button primary full">开始自动匹配</button>
-          </div>
-        </section>
-
-        <section id="matchPanel" class="panel">
-          <div class="panel-heading">
-            <div>
-              <span class="eyebrow">STEP 02</span>
-              <h2>检查区域匹配</h2>
-            </div>
-            <button id="rerunMatchButton" class="text-button">重新匹配</button>
-          </div>
-          <div class="match-summary">
-            <div><strong id="matchedCount">0</strong><span>已匹配</span></div>
-            <div><strong id="unmatchedCount">0</strong><span>待确认</span></div>
-            <div><strong id="mapRegionCount">0</strong><span>地图区域</span></div>
-          </div>
-          <div class="match-toolbar">
-            <input id="matchSearch" type="search" placeholder="搜索报表区域">
-            <select id="matchFilter">
-              <option value="all">全部</option>
-              <option value="unmatched">仅待确认</option>
-              <option value="matched">仅已匹配</option>
-            </select>
-          </div>
-          <div class="match-list-header"><span>报表区域</span><span>SVG 区域</span><span>颜色</span></div>
-          <div id="matchList" class="match-list">
-            <div class="empty-compact">导入两份素材后开始匹配</div>
+            <p class="mapping-hint">系统会在后台自动完成区域关联；渲染指标决定地图颜色。省、成交金额、成交数量等展示内容可在“样式编辑”中自由多选。</p>
+            <button id="runMatchButton" class="button primary full">应用数据并编辑样式</button>
           </div>
         </section>
 
         <section id="stylePanel" class="panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">STEP 03</span>
+              <span class="eyebrow">STEP 02</span>
               <h2>样式编辑</h2>
             </div>
             <button id="resetStyleButton" class="text-button">恢复默认</button>
@@ -148,7 +120,6 @@
                 <option value="gradient">数值渐变</option>
                 <option value="bins">数值分级</option>
                 <option value="report">使用报表颜色</option>
-                <option value="manual">逐区域自定义</option>
               </select>
             </label>
             <div id="gradientControls" class="color-row">
@@ -190,11 +161,12 @@
             <div class="field-grid">
               <label>标题颜色<input id="titleColor" type="color" value="#0f172a"></label>
               <label>标题字号<input id="titleSize" type="number" min="12" max="96" value="30"></label>
-              <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
-              <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="10"></label>
-              <label>标签描边颜色<input id="labelOutlineColor" type="color" value="#ffffff"></label>
-              <label>标签描边粗细<input id="labelOutlineWidth" type="number" min="0" max="8" step="0.2" value="1.6"></label>
+              <label>全部标注颜色<input id="labelColor" type="color" value="#0f172a"></label>
+              <label>全部标注字号<input id="labelSize" type="number" min="6" max="48" value="10"></label>
+              <label>全部标注描边<input id="labelOutlineColor" type="color" value="#ffffff"></label>
+              <label>描边粗细<input id="labelOutlineWidth" type="number" min="0" max="8" step="0.2" value="1.6"></label>
             </div>
+            <p class="control-help">以上设置会统一应用到省、成交条数、成交金额等所有已选择的地图标注内容。</p>
             <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示数据标注</label>
             <div id="labelFieldControls" class="label-field-controls hidden">
               <div class="label-field-heading">
@@ -277,7 +249,7 @@
         <section id="exportPanel" class="panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">STEP 04</span>
+              <span class="eyebrow">STEP 03</span>
               <h2>导出设置</h2>
             </div>
           </div>
@@ -347,6 +319,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-label-editor"></script>
+  <script src="app.js?v=20260729-ui-polish"></script>
 </body>
 </html>
