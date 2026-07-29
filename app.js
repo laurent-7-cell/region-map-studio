@@ -65,8 +65,6 @@
     const hasData = state.rows.length > 0;
     const ready = hasSvg && hasData && state.matches.length > 0;
     $("stepImportState").textContent = hasSvg && hasData ? "已完成" : "待完成";
-    const matched = state.matches.filter((item) => item.mapKey).length;
-    $("stepMatchState").textContent = state.matches.length ? `${matched}/${state.matches.length}` : "待完成";
     $("exportButton").disabled = !ready;
     $("exportTopButton").disabled = !ready;
     $("runMatchButton").disabled = !(hasSvg && hasData);
@@ -186,7 +184,6 @@
       state.labelOffsets = {};
       $("svgFileInfo").innerHTML = `<strong>${escapeHtml(name)}</strong><span>${regions.length} 个区域${sourceMeta ? ` · ${escapeHtml(sourceMeta)}` : ""}</span>`;
       $("svgFileInfo").classList.remove("hidden");
-      $("mapRegionCount").textContent = String(regions.length);
       $("emptyCanvas").classList.add("hidden");
       $("previewStage").classList.remove("hidden");
       $("previewMeta").textContent = `${name} · ${regions.length} 个可识别区域`;
@@ -720,16 +717,12 @@
     updateMatchSummary();
     updateReadiness();
     refreshPreview();
-    showPanel("matchPanel");
+    showPanel("stylePanel");
     toast(`自动匹配完成：${state.matches.filter((item) => item.mapKey).length}/${state.matches.length}`);
   }
 
   function updateMatchSummary() {
-    const matched = state.matches.filter((item) => item.mapKey).length;
-    $("matchedCount").textContent = String(matched);
-    $("unmatchedCount").textContent = String(state.matches.length - matched);
-    $("mapRegionCount").textContent = String(state.mapRegions.length);
-    $("stepMatchState").textContent = `${matched}/${state.matches.length}`;
+    // Matching is automatic and intentionally has no separate interface.
   }
 
   function escapeHtml(value) {
@@ -739,29 +732,7 @@
   }
 
   function renderMatchList() {
-    const search = $("matchSearch").value.trim().toLowerCase();
-    const filter = $("matchFilter").value;
-    const rows = state.matches.filter((item) => {
-      if (search && !item.sourceName.toLowerCase().includes(search)) return false;
-      if (filter === "matched" && !item.mapKey) return false;
-      if (filter === "unmatched" && item.mapKey) return false;
-      return true;
-    });
-    if (!rows.length) {
-      $("matchList").innerHTML = '<div class="empty-compact">没有符合条件的区域</div>';
-      return;
-    }
-    $("matchList").innerHTML = rows.map((item) => {
-      const options = ['<option value="">未匹配</option>'].concat(state.mapRegions.map((region) =>
-        `<option value="${escapeHtml(region.key)}" ${region.key === item.mapKey ? "selected" : ""}>${escapeHtml(region.label)}</option>`
-      )).join("");
-      const score = item.mapKey ? `${Math.round(item.score * 100)}%` : "请手动选择";
-      return `<div class="match-row ${item.mapKey ? "" : "unmatched"}" data-row-index="${item.rowIndex}">
-        <div class="match-source"><strong>${escapeHtml(item.sourceName || `第 ${item.rowIndex + 1} 行`)}</strong><small>${score}</small></div>
-        <select class="manual-map-select" aria-label="${escapeHtml(item.sourceName)}的地图区域">${options}</select>
-        <input class="manual-color-input" type="color" value="${item.manualColor}" aria-label="${escapeHtml(item.sourceName)}的颜色">
-      </div>`;
-    }).join("");
+    // Matching is automatic and intentionally has no separate interface.
   }
 
   function autoRunIfReady() {
@@ -781,23 +752,39 @@
   }
 
   function mixColor(a, b, ratio) {
-    const x = hexRgb(a);
-    const y = hexRgb(b);
-    const values = x.map((value, index) => Math.round(value + (y[index] - value) * ratio));
-    return `#${values.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+    const parse = (value) => {
+      if (value === "transparent") return { rgb: [0, 0, 0], alpha: 0 };
+      return { rgb: hexRgb(value), alpha: 1 };
+    };
+    const x = parse(a);
+    const y = parse(b);
+    if (x.alpha === 0 && y.alpha > 0) x.rgb = [...y.rgb];
+    if (y.alpha === 0 && x.alpha > 0) y.rgb = [...x.rgb];
+    const values = x.rgb.map((value, index) => Math.round(value + (y.rgb[index] - value) * ratio));
+    const alpha = x.alpha + (y.alpha - x.alpha) * ratio;
+    if (alpha >= 0.999) {
+      return `#${values.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+    return `rgba(${values.join(",")},${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
+  }
+
+  function colorValue(inputOrId) {
+    const input = typeof inputOrId === "string" ? $(inputOrId) : inputOrId;
+    if (!input) return "transparent";
+    return input.dataset.transparent === "true" ? "transparent" : input.value;
   }
 
   function colorForMatch(item, min, max) {
     const mode = $("colorMode").value;
     if (mode === "manual") return item.manualColor;
     if (mode === "report" && item.reportColor) return item.reportColor;
-    if (item.value === null) return $("colorEmpty").value;
+    if (item.value === null) return colorValue("colorEmpty");
     const ratio = max === min ? 0.55 : Math.max(0, Math.min(1, (item.value - min) / (max - min)));
     if (mode === "bins") {
-      const colors = [...document.querySelectorAll(".bin-color")].map((input) => input.value);
+      const colors = [...document.querySelectorAll(".bin-color")].map(colorValue);
       return colors[Math.min(colors.length - 1, Math.floor(ratio * colors.length))];
     }
-    return mixColor($("colorLow").value, $("colorHigh").value, ratio);
+    return mixColor(colorValue("colorLow"), colorValue("colorHigh"), ratio);
   }
 
   function strokeDashArray(style) {
@@ -828,8 +815,8 @@
     targets.forEach((shape) => {
       shape.setAttribute("fill", fill);
       shape.style.fill = fill;
-      shape.setAttribute("stroke", $("strokeColor").value);
-      shape.style.stroke = $("strokeColor").value;
+      shape.setAttribute("stroke", colorValue("strokeColor"));
+      shape.style.stroke = colorValue("strokeColor");
       shape.setAttribute("stroke-width", $("strokeWidth").value);
       shape.style.strokeWidth = $("strokeWidth").value;
       shape.style.vectorEffect = "non-scaling-stroke";
@@ -842,7 +829,7 @@
     const group = createSvgElement("g", { "data-app-background": "true" });
     const rect = createSvgElement("rect", {
       x, y, width, height,
-      fill: $("backgroundColor").value,
+      fill: colorValue("backgroundColor"),
     });
     group.appendChild(rect);
     if (state.backgroundImage) {
@@ -864,7 +851,7 @@
         x: x + width / 2,
         y: y + Math.max(36, height * 0.065),
         "text-anchor": "middle",
-        fill: $("titleColor").value,
+        fill: colorValue("titleColor"),
         "font-size": $("titleSize").value,
         "font-family": "-apple-system, PingFang SC, sans-serif",
         "font-weight": "700",
@@ -883,12 +870,12 @@
       for (let i = 0; i < 5; i++) {
         const ratio = i / 4;
         const fill = $("colorMode").value === "bins"
-          ? [...document.querySelectorAll(".bin-color")][i].value
-          : mixColor($("colorLow").value, $("colorHigh").value, ratio);
+          ? colorValue([...document.querySelectorAll(".bin-color")][i])
+          : mixColor(colorValue("colorLow"), colorValue("colorHigh"), ratio);
         legend.appendChild(createSvgElement("rect", { x: i * boxWidth, y: 0, width: boxWidth + 0.5, height: 12, fill }));
       }
       const label = createSvgElement("text", {
-        x: 0, y: 28, fill: $("labelColor").value,
+        x: 0, y: 28, fill: colorValue("labelColor"),
         "font-size": Math.max(8, Number($("labelSize").value) * 0.85),
         "font-family": "-apple-system, PingFang SC, sans-serif",
       });
@@ -921,7 +908,7 @@
       y1: anchorY,
       x2: labelX,
       y2: labelY,
-      stroke: $("leaderLineColor").value,
+      stroke: colorValue("leaderLineColor"),
       "stroke-width": $("leaderLineWidth").value,
       "vector-effect": "non-scaling-stroke",
       "pointer-events": "none",
@@ -1038,7 +1025,7 @@
 
     state.mapRegions.forEach((region) => {
       const node = root.querySelector(`[data-map-key="${cssEscape(region.key)}"]`);
-      if (node) applyRegionStyle(node, $("colorEmpty").value);
+      if (node) applyRegionStyle(node, colorValue("colorEmpty"));
     });
     state.matches.forEach((item) => {
       if (!item.mapKey) return;
@@ -1113,12 +1100,12 @@
             y: labelY,
             "text-anchor": "middle",
             "dominant-baseline": "central",
-            fill: $("labelColor").value,
+            fill: colorValue("labelColor"),
             "font-size": fontSize.toFixed(2),
             "font-family": "-apple-system, PingFang SC, sans-serif",
             "font-weight": "600",
             "paint-order": "stroke",
-            stroke: outlineWidth > 0 ? $("labelOutlineColor").value : "none",
+            stroke: outlineWidth > 0 ? colorValue("labelOutlineColor") : "none",
             "stroke-width": outlineWidth,
             "stroke-linejoin": "round",
             "data-app-label": "true",
@@ -1196,7 +1183,8 @@
       canvas.height = height;
       const context = canvas.getContext("2d");
       if (forceBackground) {
-        context.fillStyle = $("backgroundColor").value || "#ffffff";
+        const background = colorValue("backgroundColor");
+        context.fillStyle = background === "transparent" ? "#ffffff" : background;
         context.fillRect(0, 0, width, height);
       }
       context.drawImage(image, 0, 0, width, height);
@@ -1322,7 +1310,10 @@
     state.labelOffsets = {};
     $("backgroundImageName").textContent = "未选择";
     $("logoName").textContent = "未选择";
-    syncHexColorInputs();
+    document.querySelectorAll('#stylePanel input[type="color"]').forEach((input) => {
+      input.dataset.transparent = "false";
+    });
+    syncColorPickers();
     updateColorModeControls();
     schedulePreview();
   }
@@ -1337,13 +1328,42 @@
     return `#${full}`;
   }
 
-  function setupHexColorInputs() {
+  function setupColorPickers() {
     document.querySelectorAll('#stylePanel input[type="color"]').forEach((colorInput) => {
-      if (colorInput.closest(".color-input-pair")) return;
-      const pair = document.createElement("div");
-      pair.className = "color-input-pair";
-      colorInput.parentNode.insertBefore(pair, colorInput);
-      pair.appendChild(colorInput);
+      if (colorInput.closest(".color-picker-control")) return;
+      colorInput.dataset.transparent = "false";
+      const control = document.createElement("div");
+      control.className = "color-picker-control";
+      colorInput.parentNode.insertBefore(control, colorInput);
+
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "color-picker-trigger";
+      trigger.setAttribute("aria-haspopup", "dialog");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.innerHTML = '<span class="color-trigger-swatch"></span><span class="color-trigger-value"></span><span class="color-trigger-arrow">⌄</span>';
+      control.appendChild(trigger);
+
+      const popover = document.createElement("div");
+      popover.className = "color-picker-popover hidden";
+      popover.setAttribute("role", "dialog");
+      popover.setAttribute("aria-label", "选择颜色");
+      popover.innerHTML = `
+        <div class="color-popover-heading">
+          <strong>选择颜色</strong>
+          <button type="button" class="color-popover-close" aria-label="关闭">×</button>
+        </div>
+        <div class="color-popover-picker-row"></div>
+        <div class="color-hex-label"><span>十六进制颜色编号</span></div>
+        <div class="color-transparent-option">
+          <input type="checkbox">
+          <span>设为透明</span>
+        </div>
+        <div class="color-presets" aria-label="常用颜色"></div>
+      `;
+      control.appendChild(popover);
+      popover.querySelector(".color-popover-picker-row").appendChild(colorInput);
+
       const hexInput = document.createElement("input");
       hexInput.type = "text";
       hexInput.className = "color-hex-input";
@@ -1353,33 +1373,130 @@
       hexInput.autocomplete = "off";
       hexInput.setAttribute("aria-label", "十六进制颜色编号");
       hexInput.placeholder = "#FFFFFF";
-      pair.appendChild(hexInput);
-      colorInput.hexInput = hexInput;
+      popover.querySelector(".color-hex-label").appendChild(hexInput);
+
+      const transparentInput = popover.querySelector('.color-transparent-option input[type="checkbox"]');
+      transparentInput.setAttribute("aria-label", "设为透明");
+      const presets = ["#0F172A", "#FFFFFF", "#64748B", "#2563EB", "#16A34A", "#F59E0B", "#DC2626", "#7C3AED"];
+      presets.forEach((color) => {
+        const preset = document.createElement("button");
+        preset.type = "button";
+        preset.className = "color-preset";
+        preset.style.background = color;
+        preset.title = color;
+        preset.setAttribute("aria-label", `选择 ${color}`);
+        preset.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          colorInput.value = color;
+          colorInput.dataset.transparent = "false";
+          transparentInput.checked = false;
+          syncOneColorPicker(colorInput);
+          notifyColorChange(colorInput);
+        });
+        popover.querySelector(".color-presets").appendChild(preset);
+      });
+
+      colorInput.colorControl = { control, trigger, popover, hexInput, transparentInput };
 
       colorInput.addEventListener("input", () => {
-        hexInput.value = colorInput.value.toUpperCase();
-        hexInput.classList.remove("invalid");
+        colorInput.dataset.transparent = "false";
+        transparentInput.checked = false;
+        syncOneColorPicker(colorInput);
+        schedulePreview();
       });
       hexInput.addEventListener("input", () => {
         const normalized = normalizeHexColor(hexInput.value);
         hexInput.classList.toggle("invalid", Boolean(hexInput.value) && !normalized);
         if (!normalized) return;
         colorInput.value = normalized;
-        colorInput.dispatchEvent(new Event("input", { bubbles: true }));
-        colorInput.dispatchEvent(new Event("change", { bubbles: true }));
+        colorInput.dataset.transparent = "false";
+        transparentInput.checked = false;
+        syncOneColorPicker(colorInput);
+        notifyColorChange(colorInput);
       });
       hexInput.addEventListener("blur", () => {
         const normalized = normalizeHexColor(hexInput.value);
         hexInput.value = normalized || colorInput.value.toUpperCase();
         hexInput.classList.remove("invalid");
       });
+      transparentInput.addEventListener("change", () => {
+        colorInput.dataset.transparent = transparentInput.checked ? "true" : "false";
+        syncOneColorPicker(colorInput);
+        notifyColorChange(colorInput);
+      });
+      popover.querySelector(".color-transparent-option").addEventListener("click", (event) => {
+        if (event.target === transparentInput) return;
+        event.preventDefault();
+        transparentInput.checked = !transparentInput.checked;
+        transparentInput.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const shouldOpen = popover.classList.contains("hidden");
+        closeColorPickers();
+        if (!shouldOpen) return;
+        popover.classList.remove("hidden");
+        trigger.setAttribute("aria-expanded", "true");
+        positionColorPopover(trigger, popover);
+      });
+      popover.addEventListener("click", (event) => event.stopPropagation());
+      popover.querySelector(".color-popover-close").addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        popover.classList.add("hidden");
+        trigger.setAttribute("aria-expanded", "false");
+      });
+      syncOneColorPicker(colorInput);
+    });
+    document.addEventListener("click", closeColorPickers);
+    window.addEventListener("resize", closeColorPickers);
+    $("stylePanel").addEventListener("scroll", closeColorPickers, { passive: true });
+  }
+
+  function notifyColorChange(colorInput) {
+    colorInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function syncOneColorPicker(colorInput) {
+    const ui = colorInput.colorControl;
+    if (!ui) return;
+    const transparent = colorInput.dataset.transparent === "true";
+    ui.hexInput.value = colorInput.value.toUpperCase();
+    ui.hexInput.classList.remove("invalid");
+    ui.transparentInput.checked = transparent;
+    const swatch = ui.trigger.querySelector(".color-trigger-swatch");
+    swatch.style.background = transparent ? "" : colorInput.value;
+    swatch.classList.toggle("transparent", transparent);
+    ui.trigger.querySelector(".color-trigger-value").textContent = transparent
+      ? "透明"
+      : colorInput.value.toUpperCase();
+  }
+
+  function syncColorPickers() {
+    document.querySelectorAll('#stylePanel input[type="color"]').forEach((colorInput) => {
+      syncOneColorPicker(colorInput);
     });
   }
 
-  function syncHexColorInputs() {
-    document.querySelectorAll('#stylePanel input[type="color"]').forEach((colorInput) => {
-      if (colorInput.hexInput) colorInput.hexInput.value = colorInput.value.toUpperCase();
+  function closeColorPickers() {
+    document.querySelectorAll(".color-picker-popover:not(.hidden)").forEach((popover) => {
+      popover.classList.add("hidden");
+      popover.closest(".color-picker-control")?.querySelector(".color-picker-trigger")?.setAttribute("aria-expanded", "false");
     });
+  }
+
+  function positionColorPopover(trigger, popover) {
+    const rect = trigger.getBoundingClientRect();
+    const width = 250;
+    const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+    const preferredTop = rect.bottom + 8;
+    const top = preferredTop + 300 > window.innerHeight
+      ? Math.max(12, rect.top - 300)
+      : preferredTop;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
   }
 
   function updateColorModeControls() {
@@ -1426,24 +1543,6 @@
 
   $("emptyUploadButton").addEventListener("click", () => $("svgInput").click());
   $("runMatchButton").addEventListener("click", runMatching);
-  $("rerunMatchButton").addEventListener("click", runMatching);
-  $("matchSearch").addEventListener("input", renderMatchList);
-  $("matchFilter").addEventListener("change", renderMatchList);
-  $("matchList").addEventListener("change", (event) => {
-    const row = event.target.closest(".match-row");
-    if (!row) return;
-    const item = state.matches.find((match) => match.rowIndex === Number(row.dataset.rowIndex));
-    if (!item) return;
-    if (event.target.classList.contains("manual-map-select")) {
-      item.mapKey = event.target.value;
-      item.score = item.mapKey ? 1 : 0;
-    }
-    if (event.target.classList.contains("manual-color-input")) item.manualColor = event.target.value;
-    updateMatchSummary();
-    updateReadiness();
-    renderMatchList();
-    schedulePreview();
-  });
 
   $("labelFieldList").addEventListener("change", () => {
     updateLabelPreview();
@@ -1464,7 +1563,7 @@
     toast("标注位置已重置");
   });
 
-  setupHexColorInputs();
+  setupColorPickers();
   controls.forEach((id) => {
     const node = $(id);
     node.addEventListener(node.type === "text" || node.type === "number" || node.type === "range" ? "input" : "change", () => {
@@ -1475,7 +1574,10 @@
       schedulePreview();
     });
   });
-  document.querySelectorAll(".bin-color").forEach((node) => node.addEventListener("input", schedulePreview));
+  document.querySelectorAll(".bin-color").forEach((node) => {
+    node.addEventListener("input", schedulePreview);
+    node.addEventListener("change", schedulePreview);
+  });
 
   $("backgroundImageInput").addEventListener("change", (event) => {
     const file = event.target.files[0];
