@@ -184,7 +184,15 @@
               <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
               <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="12"></label>
             </div>
-            <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示名称和数据</label>
+            <label class="check-label"><input id="showLabels" type="checkbox" checked>在区域上显示数据标注</label>
+            <div id="labelFieldControls" class="label-field-controls hidden">
+              <div class="label-field-heading">
+                <strong>地图标注字段</strong>
+                <span>可多选</span>
+              </div>
+              <div id="labelFieldList" class="label-field-list"></div>
+              <label class="check-label compact"><input id="showFieldNames" type="checkbox">同时显示字段名称</label>
+            </div>
             <label class="check-label"><input id="showLegend" type="checkbox" checked>显示图例</label>
             <label class="mini-upload">Logo / 水印<input id="logoInput" type="file" accept="image/*"><span id="logoName">未选择</span></label>
           </div>
@@ -274,6 +282,6 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260729-map-geometry"></script>
+  <script src="app.js?v=20260729-label-fields"></script>
 </body>
 </html>
