@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.sheetjs.com;">
+  <title>区域地图工坊</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div>
+          <h1>区域地图工坊</h1>
+          <p>SVG 数据地图 · 完全本地处理</p>
+        </div>
+      </div>
+      <div class="privacy-pill"><span></span>文件不会离开这台 Mac</div>
+      <button id="exportTopButton" class="button primary" disabled>导出地图</button>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <nav class="stepper" aria-label="制作步骤">
+          <button class="step active" data-panel="importPanel"><b>1</b><span>导入素材</span><i id="stepImportState">待完成</i></button>
+          <button class="step" data-panel="matchPanel"><b>2</b><span>区域匹配</span><i id="stepMatchState">待完成</i></button>
+          <button class="step" data-panel="stylePanel"><b>3</b><span>样式编辑</span><i>可选</i></button>
+          <button class="step" data-panel="exportPanel"><b>4</b><span>导出设置</span><i>PNG/JPG/SVG</i></button>
+        </nav>
+
+        <section id="importPanel" class="panel active">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">STEP 01</span>
+              <h2>导入素材</h2>
+            </div>
+          </div>
+
+          <label class="upload-card" id="svgDropZone">
+            <input id="svgInput" type="file" accept=".svg,image/svg+xml">
+            <span class="upload-icon svg-icon">◇</span>
+            <span class="upload-copy">
+              <strong>上传 SVG 地图</strong>
+              <small>支持 path、polygon、group 等区域结构</small>
+            </span>
+            <span class="upload-action">选择</span>
+          </label>
+          <div id="svgFileInfo" class="file-info hidden"></div>
+
+          <label class="upload-card" id="dataDropZone">
+            <input id="dataInput" type="file" accept=".xlsx,.xls,.csv,.json">
+            <span class="upload-icon data-icon">▦</span>
+            <span class="upload-copy">
+              <strong>上传区域数据</strong>
+              <small>Excel、CSV 或 JSON</small>
+            </span>
+            <span class="upload-action">选择</span>
+          </label>
+          <div id="dataFileInfo" class="file-info hidden"></div>
+
+          <div id="columnMapping" class="subsection hidden">
+            <div class="subsection-title">
+              <h3>字段识别</h3>
+              <span>可手动修改</span>
+            </div>
+            <div class="field-grid">
+              <label>区域名称<select id="regionColumn"></select></label>
+              <label>着色数值<select id="valueColumn"></select></label>
+              <label>显示标签<select id="labelColumn"></select></label>
+              <label>颜色字段<select id="colorColumn"></select></label>
+            </div>
+            <button id="runMatchButton" class="button primary full">开始自动匹配</button>
+          </div>
+        </section>
+
+        <section id="matchPanel" class="panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">STEP 02</span>
+              <h2>检查区域匹配</h2>
+            </div>
+            <button id="rerunMatchButton" class="text-button">重新匹配</button>
+          </div>
+          <div class="match-summary">
+            <div><strong id="matchedCount">0</strong><span>已匹配</span></div>
+            <div><strong id="unmatchedCount">0</strong><span>待确认</span></div>
+            <div><strong id="mapRegionCount">0</strong><span>地图区域</span></div>
+          </div>
+          <div class="match-toolbar">
+            <input id="matchSearch" type="search" placeholder="搜索报表区域">
+            <select id="matchFilter">
+              <option value="all">全部</option>
+              <option value="unmatched">仅待确认</option>
+              <option value="matched">仅已匹配</option>
+            </select>
+          </div>
+          <div class="match-list-header"><span>报表区域</span><span>SVG 区域</span><span>颜色</span></div>
+          <div id="matchList" class="match-list">
+            <div class="empty-compact">导入两份素材后开始匹配</div>
+          </div>
+        </section>
+
+        <section id="stylePanel" class="panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">STEP 03</span>
+              <h2>样式编辑</h2>
+            </div>
+            <button id="resetStyleButton" class="text-button">恢复默认</button>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>数据着色</h3></div>
+            <label>着色方式
+              <select id="colorMode">
+                <option value="gradient">数值渐变</option>
+                <option value="bins">数值分级</option>
+                <option value="report">使用报表颜色</option>
+                <option value="manual">逐区域自定义</option>
+              </select>
+            </label>
+            <div id="gradientControls" class="color-row">
+              <label>低值<input id="colorLow" type="color" value="#dbeafe"></label>
+              <label>高值<input id="colorHigh" type="color" value="#1d4ed8"></label>
+              <label>无数据<input id="colorEmpty" type="color" value="#e5e7eb"></label>
+            </div>
+            <div id="binControls" class="palette-row hidden">
+              <input class="bin-color" type="color" value="#eff6ff" aria-label="第1级颜色">
+              <input class="bin-color" type="color" value="#bfdbfe" aria-label="第2级颜色">
+              <input class="bin-color" type="color" value="#60a5fa" aria-label="第3级颜色">
+              <input class="bin-color" type="color" value="#2563eb" aria-label="第4级颜色">
+              <input class="bin-color" type="color" value="#1e3a8a" aria-label="第5级颜色">
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>地图外观</h3></div>
+            <div class="field-grid">
+              <label>边框颜色<input id="strokeColor" type="color" value="#ffffff"></label>
+              <label>边框粗细<input id="strokeWidth" type="number" min="0" max="10" step="0.2" value="1"></label>
+              <label>背景颜色<input id="backgroundColor" type="color" value="#f8fafc"></label>
+              <label class="check-label"><input id="transparentPreview" type="checkbox">预览透明背景</label>
+            </div>
+            <label class="mini-upload">背景图片<input id="backgroundImageInput" type="file" accept="image/*"><span id="backgroundImageName">未选择</span></label>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>文字与标识</h3></div>
+            <label>地图标题<input id="mapTitle" type="text" placeholder="例如：全国区域销售分布"></label>
+            <div class="field-grid">
+              <label>标题颜色<input id="titleColor" type="color" value="#0f172a"></label>
+              <label>标题字号<input id="titleSize" type="number" min="12" max="96" value="30"></label>
+              <label>标签颜色<input id="labelColor" type="color" value="#0f172a"></label>
+              <label>标签字号<input id="labelSize" type="number" min="6" max="48" value="12"></label>
+            </div>
+            <label class="check-label"><input id="showLabels" type="checkbox">在区域上显示标签</label>
+            <label class="check-label"><input id="showLegend" type="checkbox" checked>显示图例</label>
+            <label class="mini-upload">Logo / 水印<input id="logoInput" type="file" accept="image/*"><span id="logoName">未选择</span></label>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>位置与缩放</h3></div>
+            <label>地图缩放 <output id="mapScaleOutput">100%</output><input id="mapScale" type="range" min="50" max="180" value="100"></label>
+            <div class="field-grid">
+              <label>水平移动<input id="mapOffsetX" type="number" min="-1000" max="1000" value="0"></label>
+              <label>垂直移动<input id="mapOffsetY" type="number" min="-1000" max="1000" value="0"></label>
+            </div>
+          </div>
+        </section>
+
+        <section id="exportPanel" class="panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">STEP 04</span>
+              <h2>导出设置</h2>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>文件格式</h3></div>
+            <label class="export-option"><input id="exportPngBg" type="checkbox" checked><span>PNG 有背景<small>适合分享和演示</small></span></label>
+            <label class="export-option"><input id="exportPngTransparent" type="checkbox" checked><span>PNG 透明背景<small>适合设计排版</small></span></label>
+            <label class="export-option"><input id="exportJpg" type="checkbox"><span>JPG 有背景<small>文件体积较小</small></span></label>
+            <label class="export-option"><input id="exportSvg" type="checkbox" checked><span>处理后的 SVG<small>保留矢量结构</small></span></label>
+          </div>
+
+          <div class="subsection">
+            <div class="subsection-title"><h3>尺寸与数量</h3></div>
+            <div class="field-grid">
+              <label>宽度（px）<input id="exportWidth" type="number" min="64" max="16000" value="2400"></label>
+              <label>高度（px）<input id="exportHeight" type="number" min="64" max="16000" value="1600"></label>
+              <label>导出份数<input id="exportCount" type="number" min="1" max="50" value="1"></label>
+              <label>文件名前缀<input id="filePrefix" type="text" value="区域地图"></label>
+            </div>
+            <label>JPG 质量 <output id="jpgQualityOutput">92%</output><input id="jpgQuality" type="range" min="40" max="100" value="92"></label>
+          </div>
+          <button id="exportButton" class="button primary full large" disabled>选择文件夹并导出</button>
+          <p class="export-note">导出过程完全在本机完成。透明背景仅用于 PNG。</p>
+        </section>
+      </aside>
+
+      <section class="canvas-area">
+        <div class="canvas-toolbar">
+          <div class="canvas-title">
+            <strong>地图预览</strong>
+            <span id="previewMeta">等待导入 SVG</span>
+          </div>
+          <div class="toolbar-actions">
+            <button id="fitButton" class="icon-button" title="适应窗口">适应</button>
+            <button id="zoomOutButton" class="icon-button" title="缩小">−</button>
+            <output id="previewZoomOutput">100%</output>
+            <button id="zoomInButton" class="icon-button" title="放大">＋</button>
+          </div>
+        </div>
+        <div id="canvasViewport" class="canvas-viewport">
+          <div id="emptyCanvas" class="empty-canvas">
+            <div class="empty-map">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <h2>先上传一份 SVG 地图</h2>
+            <p>地图将在这里实时预览，所有文件只在本机处理。</p>
+            <button id="emptyUploadButton" class="button secondary">选择 SVG 文件</button>
+          </div>
+          <div id="previewStage" class="preview-stage hidden">
+            <div id="previewFrame" class="preview-frame"></div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span id="statusText">准备就绪</span>
+          <span id="saveState">未保存项目 · 导出即保存结果</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+  <div id="busyOverlay" class="busy-overlay hidden">
+    <div class="spinner"></div>
+    <strong id="busyTitle">正在处理</strong>
+    <span id="busyMessage">请稍候…</span>
+  </div>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
