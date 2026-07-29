@@ -1,0 +1,866 @@
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const serializer = new XMLSerializer();
+  const parser = new DOMParser();
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  const state = {
+    svgName: "",
+    svgMarkup: "",
+    mapRegions: [],
+    dataName: "",
+    headers: [],
+    rows: [],
+    matches: [],
+    backgroundImage: "",
+    logoImage: "",
+    previewZoom: 1,
+    renderedSvg: "",
+    renderTimer: null,
+  };
+
+  const controls = [
+    "colorMode", "colorLow", "colorHigh", "colorEmpty", "strokeColor",
+    "strokeWidth", "backgroundColor", "transparentPreview", "mapTitle",
+    "titleColor", "titleSize", "labelColor", "labelSize", "showLabels",
+    "showLegend", "mapScale", "mapOffsetX", "mapOffsetY",
+  ];
+
+  function toast(message, duration = 2600) {
+    const node = $("toast");
+    node.textContent = message;
+    node.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => node.classList.remove("show"), duration);
+  }
+
+  function setStatus(message) {
+    $("statusText").textContent = message;
+  }
+
+  function setBusy(active, title = "正在处理", message = "请稍候…") {
+    $("busyTitle").textContent = title;
+    $("busyMessage").textContent = message;
+    $("busyOverlay").classList.toggle("hidden", !active);
+  }
+
+  function showPanel(id) {
+    document.querySelectorAll(".panel").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === id);
+    });
+    document.querySelectorAll(".step").forEach((step) => {
+      step.classList.toggle("active", step.dataset.panel === id);
+    });
+  }
+
+  function updateReadiness() {
+    const hasSvg = Boolean(state.svgMarkup);
+    const hasData = state.rows.length > 0;
+    const ready = hasSvg && hasData && state.matches.length > 0;
+    $("stepImportState").textContent = hasSvg && hasData ? "已完成" : "待完成";
+    const matched = state.matches.filter((item) => item.mapKey).length;
+    $("stepMatchState").textContent = state.matches.length ? `${matched}/${state.matches.length}` : "待完成";
+    $("exportButton").disabled = !ready;
+    $("exportTopButton").disabled = !ready;
+    $("runMatchButton").disabled = !(hasSvg && hasData);
+  }
+
+  function fileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function sanitizeSvgDocument(doc) {
+    doc.querySelectorAll("script, foreignObject, iframe, object, embed, audio, video").forEach((node) => node.remove());
+    doc.querySelectorAll("*").forEach((node) => {
+      [...node.attributes].forEach((attribute) => {
+        const name = attribute.name.toLowerCase();
+        const value = attribute.value.trim().toLowerCase();
+        if (name.startsWith("on")) node.removeAttribute(attribute.name);
+        if ((name === "href" || name.endsWith(":href")) && /^(javascript:|https?:|file:)/.test(value)) {
+          node.removeAttribute(attribute.name);
+        }
+      });
+    });
+  }
+
+  function directTitle(node) {
+    const title = [...node.children].find((child) => child.localName === "title");
+    return title?.textContent?.trim() || "";
+  }
+
+  function usefulLabel(node) {
+    const raw = [
+      node.getAttribute("data-name"),
+      node.getAttribute("data-region"),
+      node.getAttribute("name"),
+      node.getAttribute("aria-label"),
+      directTitle(node),
+      node.id,
+    ].find((value) => value && value.trim());
+    if (!raw) return "";
+    const value = raw.trim();
+    if (/^(path|shape|group|layer|svg|clip|mask|item)[-_]?\d*$/i.test(value)) return "";
+    return value;
+  }
+
+  function extractMapRegions(doc) {
+    const root = doc.documentElement;
+    let nodes = [...root.querySelectorAll("g, path, polygon, polyline, rect, circle, ellipse")];
+    const labeled = nodes.filter((node) => usefulLabel(node));
+    if (labeled.length) {
+      nodes = labeled.filter((node) => {
+        const labeledAncestor = node.parentElement?.closest?.("[data-name],[data-region],[name],[aria-label]");
+        return !labeledAncestor || labeledAncestor === root;
+      });
+    } else {
+      nodes = nodes.filter((node) =>
+        ["path", "polygon", "polyline"].includes(node.localName) &&
+        !node.closest("defs, clipPath, mask, pattern")
+      );
+    }
+
+    const seen = new Set();
+    const regions = [];
+    nodes.forEach((node, index) => {
+      const label = usefulLabel(node) || `区域 ${index + 1}`;
+      let key = node.id || `map-region-${index + 1}`;
+      while (seen.has(key)) key = `${key}-${index + 1}`;
+      seen.add(key);
+      node.setAttribute("data-map-key", key);
+      regions.push({ key, label });
+    });
+    return regions;
+  }
+
+  function numericDimension(value, fallback) {
+    const parsed = Number.parseFloat(String(value || "").replace(/[^\d.-]/g, ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function ensureViewBox(root) {
+    const current = root.getAttribute("viewBox");
+    if (current) {
+      const numbers = current.trim().split(/[\s,]+/).map(Number);
+      if (numbers.length === 4 && numbers.every(Number.isFinite)) return numbers;
+    }
+    const width = numericDimension(root.getAttribute("width"), 1000);
+    const height = numericDimension(root.getAttribute("height"), 700);
+    root.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    return [0, 0, width, height];
+  }
+
+  async function importSvg(file) {
+    setBusy(true, "正在读取 SVG", "识别地图区域结构…");
+    try {
+      const text = await file.text();
+      const doc = parser.parseFromString(text, "image/svg+xml");
+      if (doc.querySelector("parsererror") || doc.documentElement.localName !== "svg") {
+        throw new Error("这不是有效的 SVG 文件");
+      }
+      sanitizeSvgDocument(doc);
+      ensureViewBox(doc.documentElement);
+      const regions = extractMapRegions(doc);
+      if (!regions.length) throw new Error("SVG 中没有找到可着色的区域图形");
+      state.svgName = file.name;
+      state.mapRegions = regions;
+      state.svgMarkup = serializer.serializeToString(doc.documentElement);
+      $("svgFileInfo").innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${regions.length} 个区域 · ${fileSize(file.size)}</span>`;
+      $("svgFileInfo").classList.remove("hidden");
+      $("mapRegionCount").textContent = String(regions.length);
+      $("emptyCanvas").classList.add("hidden");
+      $("previewStage").classList.remove("hidden");
+      $("previewMeta").textContent = `${file.name} · ${regions.length} 个可识别区域`;
+      setStatus(`已读取 SVG：${regions.length} 个区域`);
+      await refreshPreview();
+      autoRunIfReady();
+      updateReadiness();
+      toast(`已识别 ${regions.length} 个地图区域`);
+    } catch (error) {
+      toast(error.message || "SVG 读取失败");
+      setStatus("SVG 读取失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function rowsFromJson(data) {
+    const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [data];
+    if (!list.length) return { headers: [], rows: [] };
+    if (Array.isArray(list[0])) {
+      const headers = list[0].map((value, index) => String(value ?? `字段${index + 1}`));
+      return { headers, rows: list.slice(1).map((row) => Object.fromEntries(headers.map((h, i) => [h, row[i]]))) };
+    }
+    const headers = [...new Set(list.flatMap((item) => Object.keys(item || {})))];
+    return { headers, rows: list.map((item) => item || {}) };
+  }
+
+  function rowsFromWorkbook(workbook) {
+    const sheetName = workbook.SheetNames.find((name) => workbook.Sheets[name]["!ref"]) || workbook.SheetNames[0];
+    if (!sheetName) return { headers: [], rows: [] };
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: null, raw: true });
+    const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+    return { headers, rows };
+  }
+
+  async function importData(file) {
+    setBusy(true, "正在读取数据", "识别表头和数值列…");
+    try {
+      const extension = file.name.split(".").pop().toLowerCase();
+      let parsed;
+      if (extension === "json") {
+        parsed = rowsFromJson(JSON.parse(await file.text()));
+      } else {
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+        parsed = rowsFromWorkbook(workbook);
+      }
+      if (!parsed.rows.length || !parsed.headers.length) throw new Error("没有读取到有效的数据行");
+      state.dataName = file.name;
+      state.headers = parsed.headers;
+      state.rows = parsed.rows.filter((row) => Object.values(row).some((value) => value !== null && value !== ""));
+      populateColumnSelectors();
+      $("dataFileInfo").innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${state.rows.length} 行 · ${parsed.headers.length} 列</span>`;
+      $("dataFileInfo").classList.remove("hidden");
+      $("columnMapping").classList.remove("hidden");
+      setStatus(`已读取数据：${state.rows.length} 行`);
+      autoRunIfReady();
+      updateReadiness();
+      toast(`已读取 ${state.rows.length} 行区域数据`);
+    } catch (error) {
+      toast(error.message || "数据文件读取失败");
+      setStatus("数据文件读取失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function populateSelect(select, allowNone = false) {
+    select.innerHTML = "";
+    if (allowNone) select.add(new Option("不使用", ""));
+    state.headers.forEach((header) => select.add(new Option(header, header)));
+  }
+
+  function chooseHeader(pattern, fallback = "") {
+    return state.headers.find((header) => pattern.test(String(header))) || fallback;
+  }
+
+  function isMostlyNumeric(header) {
+    const values = state.rows.slice(0, 30).map((row) => row[header]).filter((value) => value !== null && value !== "");
+    return values.length > 0 && values.filter((value) => Number.isFinite(Number(String(value).replace(/,/g, "")))).length / values.length >= 0.7;
+  }
+
+  function populateColumnSelectors() {
+    populateSelect($("regionColumn"));
+    populateSelect($("valueColumn"));
+    populateSelect($("labelColumn"), true);
+    populateSelect($("colorColumn"), true);
+
+    $("regionColumn").value = chooseHeader(/省|市|区|县|区域|地区|region|area|name/i, state.headers[0]);
+    $("valueColumn").value = chooseHeader(/数值|数量|收入|销售|金额|value|amount|count|revenue/i,
+      state.headers.find(isMostlyNumeric) || state.headers[1] || state.headers[0]);
+    $("labelColumn").value = chooseHeader(/标签|说明|label|备注/i, "");
+    $("colorColumn").value = chooseHeader(/颜色|色值|color|colour/i, "");
+  }
+
+  const aliases = new Map(Object.entries({
+    "内蒙古自治区": "内蒙古", "广西壮族自治区": "广西", "宁夏回族自治区": "宁夏",
+    "新疆维吾尔自治区": "新疆", "西藏自治区": "西藏",
+    "香港特别行政区": "香港", "澳门特别行政区": "澳门",
+  }));
+
+  function normalizeRegion(value) {
+    let text = String(value ?? "").trim().toLowerCase().replace(/[\s·•_\-—()（）]/g, "");
+    text = aliases.get(text) || text;
+    return text
+      .replace(/维吾尔自治区$|壮族自治区$|回族自治区$|特别行政区$|自治区$/g, "")
+      .replace(/省$|市$|地区$|盟$|自治州$|自治县$|县$|区$/g, "");
+  }
+
+  function similarity(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if ((a.includes(b) || b.includes(a)) && Math.min(a.length, b.length) >= 2) return 0.88;
+    const rows = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) rows[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        rows[i][j] = Math.min(
+          rows[i - 1][j] + 1,
+          rows[i][j - 1] + 1,
+          rows[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+        );
+      }
+    }
+    return 1 - rows[a.length][b.length] / Math.max(a.length, b.length);
+  }
+
+  function numberValue(value) {
+    const parsed = Number(String(value ?? "").replace(/[,\s￥¥]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function validColor(value) {
+    const text = String(value ?? "").trim();
+    return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text) ||
+      /^(?:rgb|hsl)a?\(/i.test(text) ? text : "";
+  }
+
+  function runMatching() {
+    if (!state.svgMarkup || !state.rows.length) return;
+    const regionColumn = $("regionColumn").value;
+    const valueColumn = $("valueColumn").value;
+    const labelColumn = $("labelColumn").value;
+    const colorColumn = $("colorColumn").value;
+    const candidates = state.mapRegions.map((region) => ({ ...region, normalized: normalizeRegion(region.label) }));
+    const used = new Set();
+
+    state.matches = state.rows.map((row, index) => {
+      const sourceName = String(row[regionColumn] ?? "").trim();
+      const normalized = normalizeRegion(sourceName);
+      const ranked = candidates
+        .filter((candidate) => !used.has(candidate.key))
+        .map((candidate) => ({ candidate, score: similarity(normalized, candidate.normalized) }))
+        .sort((a, b) => b.score - a.score);
+      const best = ranked[0];
+      const mapKey = best && best.score >= 0.66 ? best.candidate.key : "";
+      if (mapKey) used.add(mapKey);
+      return {
+        rowIndex: index,
+        sourceName,
+        value: numberValue(row[valueColumn]),
+        label: String((labelColumn && row[labelColumn]) ?? sourceName),
+        reportColor: colorColumn ? validColor(row[colorColumn]) : "",
+        manualColor: "#5a66e8",
+        mapKey,
+        score: mapKey ? best.score : 0,
+      };
+    });
+    renderMatchList();
+    updateMatchSummary();
+    updateReadiness();
+    refreshPreview();
+    showPanel("matchPanel");
+    toast(`自动匹配完成：${state.matches.filter((item) => item.mapKey).length}/${state.matches.length}`);
+  }
+
+  function updateMatchSummary() {
+    const matched = state.matches.filter((item) => item.mapKey).length;
+    $("matchedCount").textContent = String(matched);
+    $("unmatchedCount").textContent = String(state.matches.length - matched);
+    $("mapRegionCount").textContent = String(state.mapRegions.length);
+    $("stepMatchState").textContent = `${matched}/${state.matches.length}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;",
+    })[char]);
+  }
+
+  function renderMatchList() {
+    const search = $("matchSearch").value.trim().toLowerCase();
+    const filter = $("matchFilter").value;
+    const rows = state.matches.filter((item) => {
+      if (search && !item.sourceName.toLowerCase().includes(search)) return false;
+      if (filter === "matched" && !item.mapKey) return false;
+      if (filter === "unmatched" && item.mapKey) return false;
+      return true;
+    });
+    if (!rows.length) {
+      $("matchList").innerHTML = '<div class="empty-compact">没有符合条件的区域</div>';
+      return;
+    }
+    $("matchList").innerHTML = rows.map((item) => {
+      const options = ['<option value="">未匹配</option>'].concat(state.mapRegions.map((region) =>
+        `<option value="${escapeHtml(region.key)}" ${region.key === item.mapKey ? "selected" : ""}>${escapeHtml(region.label)}</option>`
+      )).join("");
+      const score = item.mapKey ? `${Math.round(item.score * 100)}%` : "请手动选择";
+      return `<div class="match-row ${item.mapKey ? "" : "unmatched"}" data-row-index="${item.rowIndex}">
+        <div class="match-source"><strong>${escapeHtml(item.sourceName || `第 ${item.rowIndex + 1} 行`)}</strong><small>${score}</small></div>
+        <select class="manual-map-select" aria-label="${escapeHtml(item.sourceName)}的地图区域">${options}</select>
+        <input class="manual-color-input" type="color" value="${item.manualColor}" aria-label="${escapeHtml(item.sourceName)}的颜色">
+      </div>`;
+    }).join("");
+  }
+
+  function autoRunIfReady() {
+    if (state.svgMarkup && state.rows.length) runMatching();
+  }
+
+  function createSvgElement(name, attributes = {}) {
+    const node = document.createElementNS(SVG_NS, name);
+    Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    return node;
+  }
+
+  function hexRgb(hex) {
+    const value = hex.replace("#", "");
+    const full = value.length === 3 ? value.split("").map((char) => char + char).join("") : value;
+    return [0, 2, 4].map((index) => Number.parseInt(full.slice(index, index + 2), 16));
+  }
+
+  function mixColor(a, b, ratio) {
+    const x = hexRgb(a);
+    const y = hexRgb(b);
+    const values = x.map((value, index) => Math.round(value + (y[index] - value) * ratio));
+    return `#${values.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  function colorForMatch(item, min, max) {
+    const mode = $("colorMode").value;
+    if (mode === "manual") return item.manualColor;
+    if (mode === "report" && item.reportColor) return item.reportColor;
+    if (item.value === null) return $("colorEmpty").value;
+    const ratio = max === min ? 0.55 : Math.max(0, Math.min(1, (item.value - min) / (max - min)));
+    if (mode === "bins") {
+      const colors = [...document.querySelectorAll(".bin-color")].map((input) => input.value);
+      return colors[Math.min(colors.length - 1, Math.floor(ratio * colors.length))];
+    }
+    return mixColor($("colorLow").value, $("colorHigh").value, ratio);
+  }
+
+  function applyRegionStyle(node, fill) {
+    const targets = ["path", "polygon", "polyline", "rect", "circle", "ellipse"].includes(node.localName)
+      ? [node]
+      : [...node.querySelectorAll("path, polygon, polyline, rect, circle, ellipse")];
+    targets.forEach((shape) => {
+      shape.setAttribute("fill", fill);
+      shape.style.fill = fill;
+      shape.setAttribute("stroke", $("strokeColor").value);
+      shape.style.stroke = $("strokeColor").value;
+      shape.setAttribute("stroke-width", $("strokeWidth").value);
+      shape.style.strokeWidth = $("strokeWidth").value;
+      shape.style.vectorEffect = "non-scaling-stroke";
+    });
+  }
+
+  function addBackground(root, viewBox) {
+    const [x, y, width, height] = viewBox;
+    const group = createSvgElement("g", { "data-app-background": "true" });
+    const rect = createSvgElement("rect", {
+      x, y, width, height,
+      fill: $("backgroundColor").value,
+    });
+    group.appendChild(rect);
+    if (state.backgroundImage) {
+      const image = createSvgElement("image", {
+        x, y, width, height,
+        href: state.backgroundImage,
+        preserveAspectRatio: "xMidYMid slice",
+      });
+      group.appendChild(image);
+    }
+    root.insertBefore(group, root.firstChild);
+  }
+
+  function addTitleLegendLogo(root, viewBox, min, max) {
+    const [x, y, width, height] = viewBox;
+    const title = $("mapTitle").value.trim();
+    if (title) {
+      const text = createSvgElement("text", {
+        x: x + width / 2,
+        y: y + Math.max(36, height * 0.065),
+        "text-anchor": "middle",
+        fill: $("titleColor").value,
+        "font-size": $("titleSize").value,
+        "font-family": "-apple-system, PingFang SC, sans-serif",
+        "font-weight": "700",
+        "data-app-overlay": "title",
+      });
+      text.textContent = title;
+      root.appendChild(text);
+    }
+
+    if ($("showLegend").checked && Number.isFinite(min) && Number.isFinite(max)) {
+      const legend = createSvgElement("g", {
+        transform: `translate(${x + width * 0.055} ${y + height * 0.88})`,
+        "data-app-overlay": "legend",
+      });
+      const boxWidth = Math.max(24, width * 0.035);
+      for (let i = 0; i < 5; i++) {
+        const ratio = i / 4;
+        const fill = $("colorMode").value === "bins"
+          ? [...document.querySelectorAll(".bin-color")][i].value
+          : mixColor($("colorLow").value, $("colorHigh").value, ratio);
+        legend.appendChild(createSvgElement("rect", { x: i * boxWidth, y: 0, width: boxWidth + 0.5, height: 12, fill }));
+      }
+      const label = createSvgElement("text", {
+        x: 0, y: 28, fill: $("labelColor").value,
+        "font-size": Math.max(8, Number($("labelSize").value) * 0.85),
+        "font-family": "-apple-system, PingFang SC, sans-serif",
+      });
+      label.textContent = `${formatNumber(min)}  —  ${formatNumber(max)}`;
+      legend.appendChild(label);
+      root.appendChild(legend);
+    }
+
+    if (state.logoImage) {
+      root.appendChild(createSvgElement("image", {
+        x: x + width * 0.83,
+        y: y + height * 0.04,
+        width: width * 0.12,
+        height: height * 0.09,
+        href: state.logoImage,
+        preserveAspectRatio: "xMidYMid meet",
+        opacity: "0.9",
+        "data-app-overlay": "logo",
+      }));
+    }
+  }
+
+  function formatNumber(value) {
+    return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
+  }
+
+  async function refreshPreview() {
+    if (!state.svgMarkup) return;
+    const doc = parser.parseFromString(state.svgMarkup, "image/svg+xml");
+    const root = doc.documentElement;
+    const viewBox = ensureViewBox(root);
+    root.setAttribute("xmlns", SVG_NS);
+    root.setAttribute("width", viewBox[2]);
+    root.setAttribute("height", viewBox[3]);
+    root.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    if (!$("transparentPreview").checked) addBackground(root, viewBox);
+
+    const values = state.matches.map((item) => item.value).filter(Number.isFinite);
+    const min = values.length ? Math.min(...values) : 0;
+    const max = values.length ? Math.max(...values) : 1;
+
+    state.mapRegions.forEach((region) => {
+      const node = root.querySelector(`[data-map-key="${cssEscape(region.key)}"]`);
+      if (node) applyRegionStyle(node, $("colorEmpty").value);
+    });
+    state.matches.forEach((item) => {
+      if (!item.mapKey) return;
+      const node = root.querySelector(`[data-map-key="${cssEscape(item.mapKey)}"]`);
+      if (node) applyRegionStyle(node, colorForMatch(item, min, max));
+    });
+
+    const movable = [...root.children].filter((node) =>
+      !["defs", "style", "metadata", "title", "desc"].includes(node.localName) &&
+      !node.hasAttribute("data-app-background")
+    );
+    const mapLayer = createSvgElement("g", { "data-app-map-layer": "true" });
+    const [x, y, width, height] = viewBox;
+    const cx = x + width / 2;
+    const cy = y + height / 2;
+    const scale = Number($("mapScale").value) / 100;
+    const dx = Number($("mapOffsetX").value) || 0;
+    const dy = Number($("mapOffsetY").value) || 0;
+    mapLayer.setAttribute("transform", `translate(${dx} ${dy}) translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})`);
+    movable.forEach((node) => mapLayer.appendChild(node));
+    root.appendChild(mapLayer);
+    addTitleLegendLogo(root, viewBox, min, max);
+
+    $("previewFrame").innerHTML = serializer.serializeToString(root);
+    const liveRoot = $("previewFrame").querySelector("svg");
+    const liveLayer = liveRoot.querySelector("[data-app-map-layer]");
+
+    if ($("showLabels").checked && liveLayer) {
+      state.matches.forEach((item) => {
+        if (!item.mapKey) return;
+        const node = liveRoot.querySelector(`[data-map-key="${cssEscape(item.mapKey)}"]`);
+        if (!node || typeof node.getBBox !== "function") return;
+        try {
+          const box = node.getBBox();
+          if (!box.width && !box.height) return;
+          const text = createSvgElement("text", {
+            x: box.x + box.width / 2,
+            y: box.y + box.height / 2,
+            "text-anchor": "middle",
+            "dominant-baseline": "central",
+            fill: $("labelColor").value,
+            "font-size": $("labelSize").value,
+            "font-family": "-apple-system, PingFang SC, sans-serif",
+            "font-weight": "600",
+            "paint-order": "stroke",
+            stroke: "rgba(255,255,255,0.75)",
+            "stroke-width": "2",
+            "data-app-label": "true",
+          });
+          text.textContent = item.label;
+          liveLayer.appendChild(text);
+        } catch {
+          // Some unusual SVG nodes do not expose a measurable box.
+        }
+      });
+    }
+    state.renderedSvg = serializer.serializeToString(liveRoot);
+    updateReadiness();
+  }
+
+  function schedulePreview() {
+    clearTimeout(state.renderTimer);
+    state.renderTimer = setTimeout(refreshPreview, 80);
+  }
+
+  function cssEscape(value) {
+    if (window.CSS?.escape) return CSS.escape(value);
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function readImage(file, target) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      state[target] = reader.result;
+      schedulePreview();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function svgVariant(transparent, width, height) {
+    const doc = parser.parseFromString(state.renderedSvg, "image/svg+xml");
+    const root = doc.documentElement;
+    root.setAttribute("width", width);
+    root.setAttribute("height", height);
+    if (transparent) root.querySelectorAll("[data-app-background]").forEach((node) => node.remove());
+    return serializer.serializeToString(root);
+  }
+
+  function blobFromCanvas(canvas, type, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("图片生成失败")), type, quality);
+    });
+  }
+
+  async function rasterBlob(svgText, width, height, type, quality, forceBackground) {
+    const url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
+    try {
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error("SVG 无法转换为图片"));
+        image.src = url;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (forceBackground) {
+        context.fillStyle = $("backgroundColor").value || "#ffffff";
+        context.fillRect(0, 0, width, height);
+      }
+      context.drawImage(image, 0, 0, width, height);
+      return await blobFromCanvas(canvas, type, quality);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function exportMaps() {
+    const types = {
+      pngBg: $("exportPngBg").checked,
+      pngTransparent: $("exportPngTransparent").checked,
+      jpg: $("exportJpg").checked,
+      svg: $("exportSvg").checked,
+    };
+    if (!Object.values(types).some(Boolean)) {
+      toast("请至少选择一种导出格式");
+      return;
+    }
+    const width = Math.max(64, Math.min(16000, Number($("exportWidth").value) || 2400));
+    const height = Math.max(64, Math.min(16000, Number($("exportHeight").value) || 1600));
+    const count = Math.max(1, Math.min(50, Number($("exportCount").value) || 1));
+    const prefix = $("filePrefix").value.trim() || "区域地图";
+    const quality = Number($("jpgQuality").value) / 100;
+
+    setBusy(true, "正在生成地图", `准备 ${count} 份导出文件…`);
+    try {
+      await refreshPreview();
+      const backgroundSvg = svgVariant(false, width, height);
+      const transparentSvg = svgVariant(true, width, height);
+      const baseFiles = [];
+      if (types.pngBg) baseFiles.push({ suffix: "有背景", ext: "png", blob: await rasterBlob(backgroundSvg, width, height, "image/png", 1, false) });
+      if (types.pngTransparent) baseFiles.push({ suffix: "透明", ext: "png", blob: await rasterBlob(transparentSvg, width, height, "image/png", 1, false) });
+      if (types.jpg) baseFiles.push({ suffix: "有背景", ext: "jpg", blob: await rasterBlob(backgroundSvg, width, height, "image/jpeg", quality, true) });
+      if (types.svg) baseFiles.push({ suffix: "矢量", ext: "svg", blob: new Blob([backgroundSvg], { type: "image/svg+xml;charset=utf-8" }) });
+
+      const files = [];
+      for (let copy = 1; copy <= count; copy++) {
+        for (const item of baseFiles) {
+          const number = count > 1 ? `-${String(copy).padStart(2, "0")}` : "";
+          files.push({ name: `${prefix}-${item.suffix}${number}.${item.ext}`, blob: item.blob });
+        }
+      }
+      await saveFiles(files);
+      setStatus(`已生成 ${files.length} 个导出文件`);
+      toast(`导出完成：${files.length} 个文件`);
+    } catch (error) {
+      toast(error.message || "导出失败", 4000);
+      setStatus("导出失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFiles(files) {
+    if ("showDirectoryPicker" in window) {
+      try {
+        const directory = await window.showDirectoryPicker({ mode: "readwrite" });
+        for (const file of files) {
+          const handle = await directory.getFileHandle(file.name, { create: true });
+          const writable = await handle.createWritable();
+          await writable.write(file.blob);
+          await writable.close();
+        }
+        return;
+      } catch (error) {
+        if (error.name !== "AbortError") console.warn(error);
+        if (error.name === "AbortError") throw new Error("已取消导出");
+      }
+    }
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      const url = URL.createObjectURL(file.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.name;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      if (index < files.length - 1) await new Promise((resolve) => setTimeout(resolve, 140));
+    }
+  }
+
+  function resetStyles() {
+    $("colorMode").value = "gradient";
+    $("colorLow").value = "#dbeafe";
+    $("colorHigh").value = "#1d4ed8";
+    $("colorEmpty").value = "#e5e7eb";
+    $("strokeColor").value = "#ffffff";
+    $("strokeWidth").value = "1";
+    $("backgroundColor").value = "#f8fafc";
+    $("transparentPreview").checked = false;
+    $("mapTitle").value = "";
+    $("titleColor").value = "#0f172a";
+    $("titleSize").value = "30";
+    $("labelColor").value = "#0f172a";
+    $("labelSize").value = "12";
+    $("showLabels").checked = false;
+    $("showLegend").checked = true;
+    $("mapScale").value = "100";
+    $("mapOffsetX").value = "0";
+    $("mapOffsetY").value = "0";
+    state.backgroundImage = "";
+    state.logoImage = "";
+    $("backgroundImageName").textContent = "未选择";
+    $("logoName").textContent = "未选择";
+    updateColorModeControls();
+    schedulePreview();
+  }
+
+  function updateColorModeControls() {
+    const mode = $("colorMode").value;
+    $("gradientControls").classList.toggle("hidden", mode === "bins" || mode === "manual");
+    $("binControls").classList.toggle("hidden", mode !== "bins");
+    $("colorColumn").closest("label").style.opacity = mode === "report" ? "1" : "0.7";
+  }
+
+  function setupDropZone(zoneId, inputId, handler) {
+    const zone = $(zoneId);
+    const input = $(inputId);
+    ["dragenter", "dragover"].forEach((event) => zone.addEventListener(event, (e) => {
+      e.preventDefault();
+      zone.classList.add("dragover");
+    }));
+    ["dragleave", "drop"].forEach((event) => zone.addEventListener(event, (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+    }));
+    zone.addEventListener("drop", (event) => {
+      const file = event.dataTransfer.files[0];
+      if (file) handler(file);
+    });
+    input.addEventListener("change", () => {
+      const file = input.files[0];
+      if (file) handler(file);
+      input.value = "";
+    });
+  }
+
+  document.querySelectorAll(".step").forEach((step) => {
+    step.addEventListener("click", () => showPanel(step.dataset.panel));
+  });
+  setupDropZone("svgDropZone", "svgInput", importSvg);
+  setupDropZone("dataDropZone", "dataInput", importData);
+
+  $("emptyUploadButton").addEventListener("click", () => $("svgInput").click());
+  $("runMatchButton").addEventListener("click", runMatching);
+  $("rerunMatchButton").addEventListener("click", runMatching);
+  $("matchSearch").addEventListener("input", renderMatchList);
+  $("matchFilter").addEventListener("change", renderMatchList);
+  $("matchList").addEventListener("change", (event) => {
+    const row = event.target.closest(".match-row");
+    if (!row) return;
+    const item = state.matches.find((match) => match.rowIndex === Number(row.dataset.rowIndex));
+    if (!item) return;
+    if (event.target.classList.contains("manual-map-select")) {
+      item.mapKey = event.target.value;
+      item.score = item.mapKey ? 1 : 0;
+    }
+    if (event.target.classList.contains("manual-color-input")) item.manualColor = event.target.value;
+    updateMatchSummary();
+    updateReadiness();
+    renderMatchList();
+    schedulePreview();
+  });
+
+  controls.forEach((id) => {
+    const node = $(id);
+    node.addEventListener(node.type === "text" || node.type === "number" || node.type === "range" ? "input" : "change", () => {
+      if (id === "colorMode") updateColorModeControls();
+      if (id === "mapScale") $("mapScaleOutput").textContent = `${node.value}%`;
+      schedulePreview();
+    });
+  });
+  document.querySelectorAll(".bin-color").forEach((node) => node.addEventListener("input", schedulePreview));
+
+  $("backgroundImageInput").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    $("backgroundImageName").textContent = file.name;
+    readImage(file, "backgroundImage");
+  });
+  $("logoInput").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    $("logoName").textContent = file.name;
+    readImage(file, "logoImage");
+  });
+  $("resetStyleButton").addEventListener("click", resetStyles);
+  $("exportButton").addEventListener("click", exportMaps);
+  $("exportTopButton").addEventListener("click", () => {
+    showPanel("exportPanel");
+    $("exportButton").focus();
+  });
+  $("jpgQuality").addEventListener("input", () => $("jpgQualityOutput").textContent = `${$("jpgQuality").value}%`);
+
+  $("zoomInButton").addEventListener("click", () => {
+    state.previewZoom = Math.min(2, state.previewZoom + 0.1);
+    applyPreviewZoom();
+  });
+  $("zoomOutButton").addEventListener("click", () => {
+    state.previewZoom = Math.max(0.5, state.previewZoom - 0.1);
+    applyPreviewZoom();
+  });
+  $("fitButton").addEventListener("click", () => {
+    state.previewZoom = 1;
+    applyPreviewZoom();
+  });
+
+  function applyPreviewZoom() {
+    $("previewStage").style.transform = `scale(${state.previewZoom})`;
+    $("previewZoomOutput").textContent = `${Math.round(state.previewZoom * 100)}%`;
+  }
+
+  updateColorModeControls();
+  updateReadiness();
+})();
