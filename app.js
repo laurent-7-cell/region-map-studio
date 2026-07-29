@@ -11,6 +11,7 @@
     svgMarkup: "",
     mapRegions: [],
     dataName: "",
+    dataSource: "",
     headers: [],
     rows: [],
     matches: [],
@@ -187,15 +188,92 @@
     }
   }
 
+  function flattenJsonRecord(value, prefix = "", output = {}, depth = 0) {
+    if (value === null || value === undefined || typeof value !== "object") {
+      if (prefix) output[prefix] = value;
+      return output;
+    }
+    if (Array.isArray(value)) {
+      if (prefix) {
+        output[prefix] = value.every((item) => typeof item !== "object")
+          ? value.join(", ")
+          : JSON.stringify(value);
+      }
+      return output;
+    }
+    Object.entries(value).forEach(([key, item]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (item && typeof item === "object" && !Array.isArray(item) && depth < 2) {
+        flattenJsonRecord(item, path, output, depth + 1);
+      } else if (Array.isArray(item)) {
+        output[path] = item.every((entry) => typeof entry !== "object") ? item.join(", ") : JSON.stringify(item);
+      } else {
+        output[path] = item;
+      }
+    });
+    return output;
+  }
+
+  function findJsonRows(value, path = "$", depth = 0, candidates = []) {
+    if (depth > 6 || value === null || value === undefined) return candidates;
+    if (Array.isArray(value)) {
+      if (value.length) {
+        const objectCount = value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).length;
+        const arrayCount = value.filter(Array.isArray).length;
+        const commonPath = /(?:^|\.)(data|list|rows|items|records|results?|content|features)$/i.test(path);
+        const score = value.length + objectCount * 20 + arrayCount * 8 + (commonPath ? 50 : 0);
+        candidates.push({ list: value, path, score });
+      }
+      value.slice(0, 20).forEach((item, index) => {
+        if (item && typeof item === "object") findJsonRows(item, `${path}[${index}]`, depth + 1, candidates);
+      });
+      return candidates;
+    }
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, item]) => {
+        if (item && typeof item === "object") findJsonRows(item, `${path}.${key}`, depth + 1, candidates);
+      });
+    }
+    return candidates;
+  }
+
   function rowsFromJson(data) {
-    const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [data];
-    if (!list.length) return { headers: [], rows: [] };
+    const candidates = findJsonRows(data).sort((a, b) => b.score - a.score);
+    let list = candidates[0]?.list;
+    let sourcePath = candidates[0]?.path || "$";
+    if (!list) {
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        const entries = Object.entries(data);
+        const primitiveEntries = entries.filter(([, value]) => value === null || typeof value !== "object");
+        if (entries.length > 1 && primitiveEntries.length === entries.length) {
+          return {
+            headers: ["区域", "数值"],
+            rows: entries.map(([region, value]) => ({ 区域: region, 数值: value })),
+            sourcePath: "$（键值对象）",
+          };
+        }
+      }
+      list = [data];
+    }
+    if (!list.length) return { headers: [], rows: [], sourcePath };
     if (Array.isArray(list[0])) {
       const headers = list[0].map((value, index) => String(value ?? `字段${index + 1}`));
-      return { headers, rows: list.slice(1).map((row) => Object.fromEntries(headers.map((h, i) => [h, row[i]]))) };
+      return {
+        headers,
+        rows: list.slice(1).map((row) => Object.fromEntries(headers.map((h, i) => [h, row[i]]))),
+        sourcePath,
+      };
     }
-    const headers = [...new Set(list.flatMap((item) => Object.keys(item || {})))];
-    return { headers, rows: list.map((item) => item || {}) };
+    if (list.every((item) => item === null || typeof item !== "object")) {
+      return {
+        headers: ["序号", "数值"],
+        rows: list.map((value, index) => ({ 序号: index + 1, 数值: value })),
+        sourcePath,
+      };
+    }
+    const rows = list.map((item) => flattenJsonRecord(item || {}));
+    const headers = [...new Set(rows.flatMap((item) => Object.keys(item)))];
+    return { headers, rows, sourcePath };
   }
 
   function rowsFromWorkbook(workbook) {
@@ -204,6 +282,22 @@
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: null, raw: true });
     const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
     return { headers, rows };
+  }
+
+  function applyParsedData(parsed, name, sourceLabel = "") {
+    if (!parsed.rows.length || !parsed.headers.length) throw new Error("没有读取到有效的数据行");
+    state.dataName = name;
+    state.dataSource = sourceLabel;
+    state.headers = parsed.headers;
+    state.rows = parsed.rows.filter((row) => Object.values(row).some((value) => value !== null && value !== ""));
+    populateColumnSelectors();
+    const pathText = parsed.sourcePath && parsed.sourcePath !== "$" ? ` · ${parsed.sourcePath}` : "";
+    $("dataFileInfo").innerHTML = `<strong>${escapeHtml(name)}</strong><span>${state.rows.length} 行 · ${parsed.headers.length} 列${escapeHtml(pathText)}</span>`;
+    $("dataFileInfo").classList.remove("hidden");
+    $("columnMapping").classList.remove("hidden");
+    setStatus(`已读取数据：${state.rows.length} 行`);
+    autoRunIfReady();
+    updateReadiness();
   }
 
   async function importData(file) {
@@ -217,22 +311,76 @@
         const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
         parsed = rowsFromWorkbook(workbook);
       }
-      if (!parsed.rows.length || !parsed.headers.length) throw new Error("没有读取到有效的数据行");
-      state.dataName = file.name;
-      state.headers = parsed.headers;
-      state.rows = parsed.rows.filter((row) => Object.values(row).some((value) => value !== null && value !== ""));
-      populateColumnSelectors();
-      $("dataFileInfo").innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${state.rows.length} 行 · ${parsed.headers.length} 列</span>`;
-      $("dataFileInfo").classList.remove("hidden");
-      $("columnMapping").classList.remove("hidden");
-      setStatus(`已读取数据：${state.rows.length} 行`);
-      autoRunIfReady();
-      updateReadiness();
+      applyParsedData(parsed, file.name, "file");
       toast(`已读取 ${state.rows.length} 行区域数据`);
     } catch (error) {
       toast(error.message || "数据文件读取失败");
       setStatus("数据文件读取失败");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  function jsonInputValue(id, emptyValue = {}) {
+    const text = $(id).value.trim();
+    if (!text) return emptyValue;
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`${id === "apiHeaders" ? "请求头" : "请求体"}必须是 JSON 对象`);
+    }
+    return parsed;
+  }
+
+  async function importJsonApi() {
+    const url = $("apiUrl").value.trim();
+    if (!url) {
+      toast("请先输入 JSON API 地址");
+      $("apiUrl").focus();
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+      if (!/^https?:$/.test(parsedUrl.protocol)) throw new Error();
+    } catch {
+      toast("请输入以 http:// 或 https:// 开头的有效地址");
+      return;
+    }
+
+    setBusy(true, "正在请求 JSON API", "获取数据并识别区域字段…");
+    $("fetchApiButton").disabled = true;
+    try {
+      const method = $("apiMethod").value;
+      const headers = jsonInputValue("apiHeaders");
+      const options = { method, headers, mode: "cors", credentials: "omit" };
+      if (method === "POST") {
+        const body = jsonInputValue("apiBody");
+        options.body = JSON.stringify(body);
+        if (!Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) {
+          headers["Content-Type"] = "application/json";
+        }
+      }
+      const response = await fetch(parsedUrl.href, options);
+      if (!response.ok) throw new Error(`API 返回 ${response.status} ${response.statusText}`);
+      const text = await response.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error("API 返回的内容不是有效 JSON");
+      }
+      const parsed = rowsFromJson(json);
+      applyParsedData(parsed, `API · ${parsedUrl.hostname}`, parsedUrl.href);
+      toast(`API 数据读取成功：${state.rows.length} 行`);
+    } catch (error) {
+      const message = error instanceof SyntaxError
+        ? "请求头或请求体不是有效 JSON"
+        : error.message || "JSON API 请求失败";
+      toast(message, 4200);
+      setStatus(`${message}；若浏览器提示跨域，请让 API 开启 CORS`);
+    } finally {
+      $("fetchApiButton").disabled = false;
       setBusy(false);
     }
   }
@@ -791,6 +939,13 @@
   });
   setupDropZone("svgDropZone", "svgInput", importSvg);
   setupDropZone("dataDropZone", "dataInput", importData);
+  $("fetchApiButton").addEventListener("click", importJsonApi);
+  $("apiUrl").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") importJsonApi();
+  });
+  $("apiMethod").addEventListener("change", () => {
+    $("apiBodyWrap").classList.toggle("hidden", $("apiMethod").value !== "POST");
+  });
 
   $("emptyUploadButton").addEventListener("click", () => $("svgInput").click());
   $("runMatchButton").addEventListener("click", runMatching);
