@@ -162,30 +162,34 @@
       if (doc.querySelector("parsererror") || doc.documentElement.localName !== "svg") {
         throw new Error("这不是有效的 SVG 文件");
       }
-      sanitizeSvgDocument(doc);
-      ensureViewBox(doc.documentElement);
-      const regions = extractMapRegions(doc);
-      if (!regions.length) throw new Error("SVG 中没有找到可着色的区域图形");
-      state.svgName = file.name;
-      state.mapRegions = regions;
-      state.svgMarkup = serializer.serializeToString(doc.documentElement);
-      $("svgFileInfo").innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${regions.length} 个区域 · ${fileSize(file.size)}</span>`;
-      $("svgFileInfo").classList.remove("hidden");
-      $("mapRegionCount").textContent = String(regions.length);
-      $("emptyCanvas").classList.add("hidden");
-      $("previewStage").classList.remove("hidden");
-      $("previewMeta").textContent = `${file.name} · ${regions.length} 个可识别区域`;
-      setStatus(`已读取 SVG：${regions.length} 个区域`);
-      await refreshPreview();
-      autoRunIfReady();
-      updateReadiness();
-      toast(`已识别 ${regions.length} 个地图区域`);
+      await useSvgDocument(doc, file.name, fileSize(file.size));
     } catch (error) {
       toast(error.message || "SVG 读取失败");
       setStatus("SVG 读取失败");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function useSvgDocument(doc, name, sourceMeta = "") {
+      sanitizeSvgDocument(doc);
+      ensureViewBox(doc.documentElement);
+      const regions = extractMapRegions(doc);
+      if (!regions.length) throw new Error("SVG 中没有找到可着色的区域图形");
+      state.svgName = name;
+      state.mapRegions = regions;
+      state.svgMarkup = serializer.serializeToString(doc.documentElement);
+      $("svgFileInfo").innerHTML = `<strong>${escapeHtml(name)}</strong><span>${regions.length} 个区域${sourceMeta ? ` · ${escapeHtml(sourceMeta)}` : ""}</span>`;
+      $("svgFileInfo").classList.remove("hidden");
+      $("mapRegionCount").textContent = String(regions.length);
+      $("emptyCanvas").classList.add("hidden");
+      $("previewStage").classList.remove("hidden");
+      $("previewMeta").textContent = `${name} · ${regions.length} 个可识别区域`;
+      setStatus(`已读取 SVG：${regions.length} 个区域`);
+      await refreshPreview();
+      autoRunIfReady();
+      updateReadiness();
+      toast(`已识别 ${regions.length} 个地图区域`);
   }
 
   function flattenJsonRecord(value, prefix = "", output = {}, depth = 0) {
@@ -221,7 +225,7 @@
         const objectCount = value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).length;
         const arrayCount = value.filter(Array.isArray).length;
         const commonPath = /(?:^|\.)(data|list|rows|items|records|results?|content|features)$/i.test(path);
-        const score = value.length + objectCount * 20 + arrayCount * 8 + (commonPath ? 50 : 0);
+        const score = Math.min(value.length, 500) + objectCount * 100 + arrayCount * 3 + (commonPath ? 100000 : 0);
         candidates.push({ list: value, path, score });
       }
       value.slice(0, 20).forEach((item, index) => {
@@ -331,6 +335,100 @@
     return parsed;
   }
 
+  function isGeoJson(data) {
+    return data?.type === "FeatureCollection" && Array.isArray(data.features);
+  }
+
+  function projectedPoint(point) {
+    const longitude = Number(point?.[0]);
+    const latitude = Number(point?.[1]);
+    if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+    return [longitude, -latitude];
+  }
+
+  function geometryRings(geometry) {
+    if (!geometry) return [];
+    if (geometry.type === "Polygon") return geometry.coordinates || [];
+    if (geometry.type === "MultiPolygon") return (geometry.coordinates || []).flat();
+    return [];
+  }
+
+  function geoJsonToSvgDocument(data) {
+    const features = data.features.filter((feature) => geometryRings(feature?.geometry).length);
+    if (!features.length) throw new Error("GeoJSON 中没有找到 Polygon 或 MultiPolygon 区域");
+
+    const allPoints = [];
+    features.forEach((feature) => {
+      geometryRings(feature.geometry).forEach((ring) => {
+        ring.forEach((point) => {
+          const projected = projectedPoint(point);
+          if (projected) allPoints.push(projected);
+        });
+      });
+    });
+    if (!allPoints.length) throw new Error("GeoJSON 中没有有效的经纬度坐标");
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    allPoints.forEach(([x, y]) => {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+    const width = 1000;
+    const height = 700;
+    const padding = 34;
+    const scale = Math.min((width - padding * 2) / Math.max(maxX - minX, 1), (height - padding * 2) / Math.max(maxY - minY, 1));
+    const offsetX = (width - (maxX - minX) * scale) / 2;
+    const offsetY = (height - (maxY - minY) * scale) / 2;
+    const coordinate = (point) => {
+      const projected = projectedPoint(point);
+      if (!projected) return null;
+      return [
+        offsetX + (projected[0] - minX) * scale,
+        offsetY + (projected[1] - minY) * scale,
+      ];
+    };
+
+    const doc = document.implementation.createDocument(SVG_NS, "svg");
+    const root = doc.documentElement;
+    root.setAttribute("xmlns", SVG_NS);
+    root.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    root.setAttribute("width", String(width));
+    root.setAttribute("height", String(height));
+
+    features.forEach((feature, index) => {
+      const properties = feature.properties || {};
+      const label = String(properties.name || properties.NAME || properties.adcode || feature.id || `区域 ${index + 1}`);
+      const group = doc.createElementNS(SVG_NS, "g");
+      group.setAttribute("id", `geo-${String(properties.adcode || feature.id || index + 1).replace(/[^\w-]/g, "-")}`);
+      group.setAttribute("data-name", label);
+      const path = doc.createElementNS(SVG_NS, "path");
+      const parts = geometryRings(feature.geometry).map((ring) => {
+        const points = ring.map(coordinate).filter(Boolean);
+        if (points.length < 3) return "";
+        return `M ${points.map((point) => `${point[0].toFixed(2)} ${point[1].toFixed(2)}`).join(" L ")} Z`;
+      }).filter(Boolean);
+      if (!parts.length) return;
+      path.setAttribute("d", parts.join(" "));
+      path.setAttribute("fill", "#dbeafe");
+      path.setAttribute("stroke", "#ffffff");
+      path.setAttribute("stroke-width", "1");
+      path.setAttribute("fill-rule", "evenodd");
+      group.appendChild(path);
+      root.appendChild(group);
+    });
+    return doc;
+  }
+
+  async function importGeoJsonMap(data, sourceName) {
+    const doc = geoJsonToSvgDocument(data);
+    await useSvgDocument(doc, `GeoJSON · ${sourceName}`, `${data.features.length} 个要素`);
+  }
+
   async function importJsonApi() {
     const url = $("apiUrl").value.trim();
     if (!url) {
@@ -353,7 +451,13 @@
     try {
       const method = $("apiMethod").value;
       const headers = jsonInputValue("apiHeaders");
-      const options = { method, headers, mode: "cors", credentials: "omit" };
+      const options = {
+        method,
+        headers,
+        mode: "cors",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      };
       if (method === "POST") {
         const body = jsonInputValue("apiBody");
         options.body = JSON.stringify(body);
@@ -369,6 +473,10 @@
         json = JSON.parse(text);
       } catch {
         throw new Error("API 返回的内容不是有效 JSON");
+      }
+      if (isGeoJson(json)) {
+        setBusy(true, "正在生成 GeoJSON 地图", "转换区域边界为可编辑 SVG…");
+        await importGeoJsonMap(json, parsedUrl.hostname);
       }
       const parsed = rowsFromJson(json);
       applyParsedData(parsed, `API · ${parsedUrl.hostname}`, parsedUrl.href);
