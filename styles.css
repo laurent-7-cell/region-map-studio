@@ -410,6 +410,42 @@ output { color: var(--muted); font-size: 10px; }
   font-size: 10px;
 }
 
+.label-field-heading div {
+  display: grid;
+  gap: 2px;
+}
+
+.label-field-heading small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.label-field-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mini-button {
+  appearance: none;
+  border: 1px solid rgba(90, 102, 232, 0.25);
+  border-radius: 7px;
+  background: rgba(90, 102, 232, 0.09);
+  color: var(--accent);
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mini-button.ghost {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
 .label-field-list {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -449,6 +485,35 @@ output { color: var(--muted); font-size: 10px; }
   margin: 9px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.label-format-grid {
+  margin-top: 9px;
+}
+
+.label-preview-card {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.label-preview-card strong {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.mapping-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .mini-upload {
